@@ -64,6 +64,52 @@ class MetricsDelta(VideoMetrics):
 
 
 @dataclass(slots=True)
+class AccountConfig:
+    key: str = "default"
+    account_id: str | None = None
+    account_label: str | None = None
+    session_cookie: str = ""
+    account_label_hint: str = ""
+    selected_video_ids: list[str] = field(default_factory=list)
+    capture_enabled: bool = True
+
+    def to_dict(self, *, camel: bool = False) -> dict[str, Any]:
+        payload = asdict(self)
+        if not camel:
+            return payload
+        return {
+            "key": payload["key"],
+            "accountId": payload["account_id"],
+            "accountLabel": payload["account_label"],
+            "sessionCookie": payload["session_cookie"],
+            "accountLabelHint": payload["account_label_hint"],
+            "selectedVideoIds": payload["selected_video_ids"],
+            "captureEnabled": payload["capture_enabled"],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None, *, fallback_key: str = "default") -> "AccountConfig":
+        data = payload or {}
+        return cls(
+            key=str(data.get("key") or data.get("id") or fallback_key).strip() or fallback_key,
+            account_id=_normalize_optional_text(data.get("account_id", data.get("accountId"))),
+            account_label=_normalize_optional_text(data.get("account_label", data.get("accountLabel"))),
+            session_cookie=str(data.get("session_cookie", data.get("sessionCookie", "")) or ""),
+            account_label_hint=str(data.get("account_label_hint", data.get("accountLabelHint", "")) or ""),
+            selected_video_ids=[
+                str(item).strip()
+                for item in data.get("selected_video_ids", data.get("selectedVideoIds", [])) or []
+                if str(item).strip()
+            ],
+            capture_enabled=bool(data.get("capture_enabled", data.get("captureEnabled", True))),
+        )
+
+    @property
+    def display_label(self) -> str:
+        return self.account_label or self.account_label_hint or self.account_id or self.key
+
+
+@dataclass(slots=True)
 class VideoSnapshot:
     id: str
     video_id: str
@@ -169,6 +215,7 @@ class MonitorSettings:
     selected_account_label: str | None = None
     session_cookie: str = ""
     account_label_hint: str = ""
+    accounts: list[AccountConfig] = field(default_factory=list)
     request_timeout_seconds: int = 20
     listen_host: str = "127.0.0.1"
     listen_port: int = 8765
@@ -188,6 +235,7 @@ class MonitorSettings:
             "selectedAccountLabel": payload["selected_account_label"],
             "sessionCookie": payload["session_cookie"],
             "accountLabelHint": payload["account_label_hint"],
+            "accounts": [account.to_dict(camel=True) for account in self.accounts],
             "requestTimeoutSeconds": payload["request_timeout_seconds"],
             "listenHost": payload["listen_host"],
             "listenPort": payload["listen_port"],
@@ -196,6 +244,35 @@ class MonitorSettings:
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> "MonitorSettings":
         data = payload or {}
+        raw_accounts = data.get("accounts") or []
+        accounts = [
+            AccountConfig.from_dict(item, fallback_key=f"account-{index + 1}")
+            for index, item in enumerate(raw_accounts)
+            if isinstance(item, dict)
+        ]
+        legacy_session_cookie = str(data.get("session_cookie", data.get("sessionCookie", "")) or "")
+        legacy_selected_video_ids = [
+            str(item).strip()
+            for item in data.get("selected_video_ids", data.get("selectedVideoIds", [])) or []
+            if str(item).strip()
+        ]
+        legacy_account_hint = str(data.get("account_label_hint", data.get("accountLabelHint", "")) or "")
+        legacy_account_id = _normalize_optional_text(data.get("selected_account_id", data.get("selectedAccountId")))
+        legacy_account_label = _normalize_optional_text(
+            data.get("selected_account_label", data.get("selectedAccountLabel"))
+        )
+        if not accounts and (legacy_session_cookie or legacy_selected_video_ids or legacy_account_hint or legacy_account_id):
+            accounts = [
+                AccountConfig(
+                    key="default",
+                    account_id=legacy_account_id,
+                    account_label=legacy_account_label,
+                    session_cookie=legacy_session_cookie,
+                    account_label_hint=legacy_account_hint,
+                    selected_video_ids=legacy_selected_video_ids,
+                )
+            ]
+        primary_account = accounts[0] if accounts else None
         return cls(
             poll_interval_minutes=max(1, int(data.get("poll_interval_minutes", data.get("pollIntervalMinutes", 1)) or 1)),
             default_compare_window_minutes=max(
@@ -205,17 +282,12 @@ class MonitorSettings:
             retention_days=max(1, int(data.get("retention_days", data.get("retentionDays", 30)) or 30)),
             target_url=str(data.get("target_url", data.get("targetUrl", cls().target_url)) or cls().target_url),
             capture_paused=bool(data.get("capture_paused", data.get("capturePaused", False))),
-            selected_video_ids=[
-                str(item).strip()
-                for item in data.get("selected_video_ids", data.get("selectedVideoIds", [])) or []
-                if str(item).strip()
-            ],
-            selected_account_id=_normalize_optional_text(data.get("selected_account_id", data.get("selectedAccountId"))),
-            selected_account_label=_normalize_optional_text(
-                data.get("selected_account_label", data.get("selectedAccountLabel"))
-            ),
-            session_cookie=str(data.get("session_cookie", data.get("sessionCookie", "")) or ""),
-            account_label_hint=str(data.get("account_label_hint", data.get("accountLabelHint", "")) or ""),
+            selected_video_ids=primary_account.selected_video_ids if primary_account else legacy_selected_video_ids,
+            selected_account_id=primary_account.account_id if primary_account else legacy_account_id,
+            selected_account_label=primary_account.account_label if primary_account else legacy_account_label,
+            session_cookie=primary_account.session_cookie if primary_account else legacy_session_cookie,
+            account_label_hint=primary_account.account_label_hint if primary_account else legacy_account_hint,
+            accounts=accounts,
             request_timeout_seconds=max(
                 5,
                 int(data.get("request_timeout_seconds", data.get("requestTimeoutSeconds", 20)) or 20),
@@ -287,6 +359,8 @@ class WindowStats:
 
 @dataclass(slots=True)
 class VideoWindowStats(WindowStats):
+    account_id: str | None = None
+    account_label: str | None = None
     title: str = ""
     description: str | None = None
     publish_time: datetime | None = None
@@ -301,6 +375,8 @@ class VideoWindowStats(WindowStats):
             payload.update(
                 {
                     "title": self.title,
+                    "account_id": self.account_id,
+                    "account_label": self.account_label,
                     "description": self.description,
                     "publish_time": format_datetime_text(self.publish_time),
                     "last_captured_at": format_datetime_text(self.last_captured_at),
@@ -313,6 +389,8 @@ class VideoWindowStats(WindowStats):
         payload.update(
             {
                 "title": self.title,
+                "accountId": self.account_id,
+                "accountLabel": self.account_label,
                 "description": self.description,
                 "publishTime": format_datetime_text(self.publish_time),
                 "lastCapturedAt": format_datetime_text(self.last_captured_at),

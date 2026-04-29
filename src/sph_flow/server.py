@@ -89,6 +89,7 @@ class MonitorHttpServer:
                                 "target_url": payload.get("targetUrl"),
                                 "session_cookie": payload.get("sessionCookie"),
                                 "account_label_hint": payload.get("accountLabelHint"),
+                                "accounts": payload.get("accounts") or [],
                                 "request_timeout_seconds": payload.get("requestTimeoutSeconds"),
                             }
                         )
@@ -96,16 +97,24 @@ class MonitorHttpServer:
                         self._write_json(HTTPStatus.OK, {"ok": True, "settings": settings.to_dict(camel=True)})
                         return
                     if parsed.path == "/api/capture/prepare":
-                        preview = service.prepare_capture()
-                        self._write_json(HTTPStatus.OK, {"ok": preview.ok, "preview": preview.to_dict(camel=True)})
+                        preview = service.prepare_capture_accounts(payload.get("accountKeys") or None)
+                        self._write_json(HTTPStatus.OK, preview)
                         return
                     if parsed.path == "/api/capture/start":
-                        result = service.start_capture_session(payload.get("selectedVideoIds") or [])
+                        result = service.start_capture_session(payload.get("accounts") or payload.get("selectedVideoIds") or [])
                         scheduler.wake()
                         self._write_json(HTTPStatus.OK, {"ok": True, **result})
                         return
                     if parsed.path == "/api/capture/pause":
                         settings = service.set_capture_paused(bool(payload.get("paused")))
+                        scheduler.wake()
+                        self._write_json(HTTPStatus.OK, {"ok": True, "settings": settings.to_dict(camel=True)})
+                        return
+                    if parsed.path == "/api/accounts/capture-enabled":
+                        settings = service.set_account_capture_enabled(
+                            str(payload.get("accountKey") or ""),
+                            bool(payload.get("enabled")),
+                        )
                         scheduler.wake()
                         self._write_json(HTTPStatus.OK, {"ok": True, "settings": settings.to_dict(camel=True)})
                         return

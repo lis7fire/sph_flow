@@ -27,6 +27,10 @@ body {
     linear-gradient(180deg, #f7f3ea 0%, #efe8da 100%);
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 button,
 input,
 textarea,
@@ -96,23 +100,7 @@ a {
   backdrop-filter: blur(8px);
 }
 
-.status-panel,
 .settings-panel,
-.selection-panel,
-.chart-panel,
-.summary-panel,
-.recent-panel {
-  grid-column: span 12;
-}
-
-.status-panel {
-  grid-column: span 4;
-}
-
-.settings-panel {
-  grid-column: span 8;
-}
-
 .selection-panel,
 .chart-panel,
 .summary-panel,
@@ -131,6 +119,53 @@ a {
   align-items: center;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(15, 23, 42, 0.36);
+  backdrop-filter: blur(4px);
+}
+
+.modal-backdrop[hidden],
+.selection-panel[hidden] {
+  display: none;
+}
+
+.selection-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 41;
+  width: min(1080px, calc(100vw - 48px));
+  max-height: calc(100vh - 56px);
+  display: grid;
+  grid-template-rows: auto auto minmax(220px, 1fr) auto;
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+}
+
+.selection-panel .panel-title-row {
+  align-items: flex-start;
+}
+
+.selection-panel .panel-title-row p {
+  margin: 8px 0 0;
+}
+
+.modal-title-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-close {
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .chart-title-row {
@@ -228,6 +263,156 @@ textarea {
   flex-wrap: wrap;
 }
 
+.accounts-config {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.subsection-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.subsection-title-row h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.subsection-title-row p {
+  margin: 0;
+}
+
+.subsection-actions,
+.account-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.accounts-list {
+  display: grid;
+  gap: 14px;
+}
+
+.selection-account-group {
+  padding: 16px;
+  border: 1px solid rgba(132, 111, 84, 0.16);
+  border-radius: 20px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.account-editor {
+  padding: 16px;
+  border: 1px solid rgba(132, 111, 84, 0.24);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(241, 245, 249, 0.95), rgba(232, 238, 241, 0.88)),
+    rgba(226, 232, 240, 0.86);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.selection-account-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.account-editor-head {
+  display: grid;
+  grid-template-columns: minmax(80px, 110px) minmax(360px, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+}
+
+.account-editor-identity {
+  min-width: 0;
+}
+
+.account-editor-title,
+.selection-account-title {
+  font-weight: 700;
+}
+
+.account-editor-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-status-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-status-grid div {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.account-status-grid span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-status-grid strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.account-detail {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.account-detail summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  user-select: none;
+}
+
+.account-detail[open] summary {
+  margin-bottom: 14px;
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
+.account-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+  gap: 14px;
+}
+
+.account-editor textarea {
+  min-height: 92px;
+}
+
 button,
 .link-button {
   border: 0;
@@ -241,6 +426,12 @@ button,
 button:hover,
 .link-button:hover {
   transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
 }
 
 .primary {
@@ -294,10 +485,16 @@ button:hover,
 
 .video-selection-list {
   display: grid;
-  gap: 12px;
-  max-height: 340px;
+  gap: 16px;
+  max-height: min(58vh, 560px);
   overflow: auto;
   margin-bottom: 18px;
+  padding-right: 4px;
+}
+
+.selection-account-videos {
+  display: grid;
+  gap: 12px;
 }
 
 .video-option {
@@ -471,17 +668,24 @@ td.number {
 }
 
 @media (max-width: 1080px) {
-  .status-panel,
-  .settings-panel {
-    grid-column: span 12;
-  }
-
   .chart-title-row {
     grid-template-columns: 1fr;
   }
 
   .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-editor-head {
+    grid-template-columns: 1fr;
+  }
+
+  .account-status-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -498,6 +702,29 @@ td.number {
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .subsection-title-row,
+  .selection-account-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .selection-panel {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    padding: 18px;
+  }
+
+  .selection-panel .panel-title-row,
+  .selection-toolbar,
+  .modal-title-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .account-actions {
+    justify-content: flex-start;
   }
 
   .chart-controls {

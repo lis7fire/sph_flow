@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="4e7737b3-54ca-4e74-9e02-dff67984f3b0" name="更改" comment="重构，流控程序">
-      <change beforePath="$PROJECT_DIR$/.idea/sph_flow.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/sph_flow.iml" afterDir="false" />
+    <list default="true" id="4e7737b3-54ca-4e74-9e02-dff67984f3b0" name="更改" comment="单账户完成">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/sph_flow/analytics.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/analytics.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/sph_flow/collector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/collector.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sph_flow/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/models.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sph_flow/server.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/server.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sph_flow/service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/service.py" afterDir="false" />
@@ -13,7 +10,6 @@
       <change beforePath="$PROJECT_DIR$/src/sph_flow/web/app.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/web/app.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sph_flow/web/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/web/index.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sph_flow/web/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/web/styles.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/sph_flow/xlsx_export.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/xlsx_export.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -64,7 +60,7 @@
       <option name="presentableId" value="Default" />
       <updated>1776826985711</updated>
       <workItem from="1777442813691" duration="7388000" />
-      <workItem from="1777454975076" duration="2004000" />
+      <workItem from="1777454975076" duration="4499000" />
     </task>
     <task id="LOCAL-00001" summary="初始化项目">
       <option name="closed" value="true" />
@@ -82,7 +78,15 @@
       <option name="project" value="LOCAL" />
       <updated>1777449777666</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="单账户完成">
+      <option name="closed" value="true" />
+      <created>1777457531364</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1777457531364</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -91,7 +95,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="初始化项目" />
     <MESSAGE value="重构，流控程序" />
-    <option name="LAST_COMMIT_MESSAGE" value="重构，流控程序" />
+    <MESSAGE value="单账户完成" />
+    <option name="LAST_COMMIT_MESSAGE" value="单账户完成" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

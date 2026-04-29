@@ -1,10 +1,11 @@
 const state = {
   settings: null,
   status: null,
+  accountStatuses: [],
   recentSnapshots: [],
   hasCaptureHistory: false,
   currentPreview: null,
-  selectedVideoIds: new Set(),
+  selectedVideoIdsByAccount: new Map(),
   selectedVideoId: "",
   windowRows: [],
   isCapturing: false,
@@ -23,25 +24,20 @@ const metricLabels = {
 const chartMetrics = ["playCount", "likeCount", "commentCount", "shareCount", "followCount"];
 
 const el = {
-  captureButton: document.getElementById("capture-button"),
-  runNowButton: document.getElementById("run-now-button"),
   refreshAllButton: document.getElementById("refresh-all-button"),
   exportButton: document.getElementById("export-button"),
-  lastRun: document.getElementById("last-run"),
-  lastSuccess: document.getElementById("last-success"),
   lastError: document.getElementById("last-error"),
-  accountLabel: document.getElementById("account-label"),
-  captureScope: document.getElementById("capture-scope"),
   recentSnapshots: document.getElementById("recent-snapshots"),
   settingsForm: document.getElementById("settings-form"),
   pollInterval: document.getElementById("poll-interval"),
   compareWindow: document.getElementById("compare-window"),
   retentionDays: document.getElementById("retention-days"),
   targetUrl: document.getElementById("target-url"),
-  sessionCookie: document.getElementById("session-cookie"),
-  accountLabelHint: document.getElementById("account-label-hint"),
+  accountsList: document.getElementById("accounts-list"),
+  addAccountButton: document.getElementById("add-account-button"),
   requestTimeout: document.getElementById("request-timeout"),
   saveStatus: document.getElementById("save-status"),
+  selectionBackdrop: document.getElementById("selection-backdrop"),
   selectionPanel: document.getElementById("selection-panel"),
   selectionAccount: document.getElementById("selection-account"),
   selectionStatus: document.getElementById("selection-status"),
@@ -50,6 +46,7 @@ const el = {
   selectAllVideos: document.getElementById("select-all-videos"),
   confirmSelection: document.getElementById("confirm-selection"),
   cancelSelection: document.getElementById("cancel-selection"),
+  selectionClose: document.getElementById("selection-close"),
   windowMinutes: document.getElementById("window-minutes"),
   videoSelect: document.getElementById("video-select"),
   chartTitle: document.getElementById("chart-title"),
@@ -176,20 +173,205 @@ async function apiPost(path, data = {}) {
   return payload;
 }
 
-function renderStatus() {
-  el.lastRun.textContent = state.status?.lastMessage
-    ? `${formatTimestamp(state.status.lastRunAt)}，${state.status.lastMessage}`
-    : formatTimestamp(state.status?.lastRunAt);
-  el.lastSuccess.textContent = formatTimestamp(state.status?.lastSuccessAt);
-  el.lastError.textContent = state.status?.lastError || "无";
-  el.accountLabel.textContent =
-    state.status?.accountLabel || state.settings?.selectedAccountLabel || state.settings?.accountLabelHint || "未知";
-  const selectedCount = state.settings?.selectedVideoIds?.length || 0;
-  if (selectedCount > 0) {
-    el.captureScope.textContent = `${state.settings?.selectedAccountLabel || "当前账号"} · 已选择 ${selectedCount} 条视频`;
-  } else {
-    el.captureScope.textContent = "尚未选择视频范围";
+function createAccountKey() {
+  return `account-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getSettingsAccounts(settings) {
+  const accounts = settings?.accounts || [];
+  if (accounts.length) {
+    return accounts;
   }
+  if (settings?.sessionCookie || settings?.accountLabelHint || settings?.selectedVideoIds?.length) {
+    return [
+      {
+        key: "default",
+        accountId: settings.selectedAccountId || "",
+        accountLabel: settings.selectedAccountLabel || "",
+        sessionCookie: settings.sessionCookie || "",
+        accountLabelHint: settings.accountLabelHint || "",
+        selectedVideoIds: settings.selectedVideoIds || [],
+        captureEnabled: true,
+      },
+    ];
+  }
+  return [
+    {
+      key: createAccountKey(),
+      accountId: "",
+      accountLabel: "",
+      sessionCookie: "",
+      accountLabelHint: "",
+      selectedVideoIds: [],
+      captureEnabled: true,
+    },
+  ];
+}
+
+function getAccountStatus(account) {
+  return (state.accountStatuses || []).find((item) => item.accountKey === account.key) || null;
+}
+
+function getSavedAccount(accountKey) {
+  return (state.settings?.accounts || []).find((item) => item.key === accountKey) || null;
+}
+
+function getAccountSelectedCount(account, status) {
+  return Number(status?.selectedVideoCount ?? account.selectedVideoIds?.length ?? 0);
+}
+
+function getAccountStatusText(account, status) {
+  if (status?.statusText) {
+    return status.statusText;
+  }
+  const selectedCount = getAccountSelectedCount(account, status);
+  if (!selectedCount) {
+    return "未选择视频";
+  }
+  return account.captureEnabled === false ? "已暂停" : "后台采集中";
+}
+
+function getAccountActionLabel(account, status) {
+  const selectedCount = getAccountSelectedCount(account, status);
+  if (!selectedCount) {
+    return "选择视频";
+  }
+  return account.captureEnabled === false ? "恢复采集" : "暂停采集";
+}
+
+function getAccountDisplayName(account, status, index) {
+  return status?.accountLabel || account.accountLabel || account.accountLabelHint || `账号 ${index + 1}`;
+}
+
+function createAccountEditor(account = {}, index = 0) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "account-editor";
+  wrapper.dataset.accountKey = account.key || createAccountKey();
+  const status = getAccountStatus(account);
+  const selectedCount = getAccountSelectedCount(account, status);
+  const statusText = getAccountStatusText(account, status);
+  const actionLabel = getAccountActionLabel(account, status);
+  const lastCapturedAt = status?.lastCapturedAt || "未记录";
+  const captureEnabled = account.captureEnabled !== false;
+  const disabled = state.isCapturing ? "disabled" : "";
+  const detailOpen = account.sessionCookie ? "" : "open";
+  const displayName = getAccountDisplayName(account, status, index);
+  wrapper.innerHTML = `
+    <div class="account-editor-head">
+      <div class="account-editor-identity">
+        <div class="account-editor-title">${escapeHtml(displayName)}</div>
+        <div class="account-status-pill">${escapeHtml(statusText)}</div>
+      </div>
+      <div class="account-status-grid">
+        <div><span>已选视频</span><strong>${selectedCount} 条</strong></div>
+        <div><span>最近采集</span><strong>${escapeHtml(lastCapturedAt)}</strong></div>
+        <div><span>运行状态</span><strong>${escapeHtml(statusText)}</strong></div>
+      </div>
+      <div class="account-actions">
+        <button type="button" class="${selectedCount && captureEnabled ? "secondary" : "primary"} account-capture-action" ${disabled}>${escapeHtml(actionLabel)}</button>
+        ${selectedCount ? `<button type="button" class="ghost account-select-videos" ${disabled}>重新选择</button>` : ""}
+        <button type="button" class="ghost account-remove" ${disabled}>删除</button>
+      </div>
+    </div>
+    <details class="account-detail" ${detailOpen}>
+      <summary>账号资料与 Cookie</summary>
+      <div class="account-editor-grid">
+        <label>
+          <span>账号名称补充</span>
+          <input data-field="accountLabelHint" type="text" value="${escapeHtml(account.accountLabelHint || account.accountLabel || "")}" placeholder="接口拿不到昵称时可手动填写" />
+        </label>
+        <label>
+          <span>账号 ID（可选）</span>
+          <input data-field="accountId" type="text" value="${escapeHtml(account.accountId || "")}" placeholder="同一 Cookie 多账号时可填写 finder id" />
+        </label>
+      </div>
+      <label>
+        <span>视频号后台 Cookie</span>
+        <textarea data-field="sessionCookie" rows="4" placeholder="从这个账号的视频号后台请求头里复制完整 Cookie">${escapeHtml(account.sessionCookie || "")}</textarea>
+      </label>
+    </details>
+  `;
+  wrapper.querySelector(".account-remove").addEventListener("click", () => {
+    wrapper.remove();
+    renumberAccountEditors();
+  });
+  wrapper.querySelector(".account-capture-action").addEventListener("click", async () => {
+    await handleAccountCaptureAction(wrapper.dataset.accountKey, account, status);
+  });
+  wrapper.querySelector(".account-select-videos")?.addEventListener("click", async () => {
+    await beginCaptureSetup(wrapper.dataset.accountKey);
+  });
+  return wrapper;
+}
+
+function renumberAccountEditors() {
+  el.accountsList.querySelectorAll(".account-editor").forEach((editor, index) => {
+    const title = editor.querySelector(".account-editor-title");
+    const existingAccount = (state.settings?.accounts || []).find((item) => item.key === editor.dataset.accountKey);
+    if (title) {
+      title.textContent = getAccountDisplayName(existingAccount || {}, getAccountStatus(existingAccount || {}), index);
+    }
+  });
+}
+
+function renderAccountEditors(accounts) {
+  el.accountsList.innerHTML = "";
+  accounts.forEach((account, index) => {
+    el.accountsList.appendChild(createAccountEditor(account, index));
+  });
+}
+
+function addAccountEditor(account = {}) {
+  const index = el.accountsList.querySelectorAll(".account-editor").length;
+  el.accountsList.appendChild(createAccountEditor(account, index));
+}
+
+async function handleAccountCaptureAction(accountKey, account, status) {
+  if (state.isCapturing) {
+    return;
+  }
+  const savedAccount = getSavedAccount(accountKey);
+  if (!savedAccount) {
+    el.lastError.textContent = "请先保存账号配置，再选择视频或控制采集。";
+    return;
+  }
+  const selectedCount = getAccountSelectedCount(account, status);
+  if (!selectedCount) {
+    await beginCaptureSetup(accountKey);
+    return;
+  }
+  state.isCapturing = true;
+  renderAccountEditors(getSettingsAccounts(state.settings));
+  try {
+    await apiPost("/api/accounts/capture-enabled", {
+      accountKey,
+      enabled: savedAccount.captureEnabled === false,
+    });
+    await refreshAll();
+  } catch (error) {
+    el.lastError.textContent = error.message;
+  } finally {
+    state.isCapturing = false;
+    renderAccountEditors(getSettingsAccounts(state.settings));
+  }
+}
+
+function collectAccountSettings() {
+  return Array.from(el.accountsList.querySelectorAll(".account-editor"))
+    .map((editor) => {
+      const field = (name) => editor.querySelector(`[data-field="${name}"]`)?.value?.trim() || "";
+      const existingAccount = (state.settings?.accounts || []).find((item) => item.key === editor.dataset.accountKey);
+      return {
+        key: editor.dataset.accountKey || createAccountKey(),
+        accountId: field("accountId"),
+        accountLabel: field("accountLabelHint") || existingAccount?.accountLabel || "",
+        accountLabelHint: field("accountLabelHint"),
+        sessionCookie: field("sessionCookie"),
+        selectedVideoIds: existingAccount?.selectedVideoIds || [],
+        captureEnabled: existingAccount?.captureEnabled ?? true,
+      };
+    })
+    .filter((account) => account.sessionCookie);
 }
 
 function renderSettings() {
@@ -200,9 +382,8 @@ function renderSettings() {
   el.compareWindow.value = state.settings.defaultCompareWindowMinutes;
   el.retentionDays.value = state.settings.retentionDays;
   el.targetUrl.value = state.settings.targetUrl;
-  el.sessionCookie.value = state.settings.sessionCookie || "";
-  el.accountLabelHint.value = state.settings.accountLabelHint || "";
   el.requestTimeout.value = state.settings.requestTimeoutSeconds || 20;
+  renderAccountEditors(getSettingsAccounts(state.settings));
   if (!state.hasInitializedChartWindow) {
     el.windowMinutes.value = state.settings.defaultCompareWindowMinutes;
     state.hasInitializedChartWindow = true;
@@ -231,97 +412,126 @@ function renderRecentSnapshots() {
     .join("");
 }
 
-function renderPrimaryButton() {
-  const isPaused = Boolean(state.settings?.capturePaused);
-  if (state.isCapturing) {
-    el.captureButton.disabled = true;
-    el.captureButton.textContent = "处理中...";
-    return;
-  }
-  el.captureButton.disabled = false;
-  if (isPaused) {
-    el.captureButton.textContent = "恢复采集";
-    return;
-  }
-  el.captureButton.textContent = state.hasCaptureHistory ? "暂停采集" : "开始采集";
-}
-
 function hideSelectionPanel() {
   state.currentPreview = null;
-  state.selectedVideoIds = new Set();
+  state.selectedVideoIdsByAccount = new Map();
   el.selectionPanel.hidden = true;
+  el.selectionBackdrop.hidden = true;
+  document.body.classList.remove("modal-open");
   el.videoSelectionList.innerHTML = '<div class="empty">等待读取近期视频...</div>';
   el.selectionStatus.textContent = "先读取近期视频，再选择本次要采集的内容。";
 }
 
-function defaultSelectedVideoIds(preview) {
+function defaultSelectedVideoIds(preview, account) {
   const previewIds = new Set(preview.videos.map((item) => item.videoId));
-  const savedIds = state.settings?.selectedVideoIds || [];
+  const savedIds = account?.savedSelectedVideoIds || [];
   const preserved = savedIds.filter((item) => previewIds.has(item));
   return preserved.length ? preserved : preview.videos.map((item) => item.videoId);
 }
 
+function getSelectablePreviews() {
+  return state.currentPreview?.previews?.filter((preview) => preview.ok && preview.videos.length) || [];
+}
+
+function getSelectionTotals() {
+  const previews = getSelectablePreviews();
+  const total = previews.reduce((sum, preview) => sum + preview.videos.length, 0);
+  const selectedCount = previews.reduce(
+    (sum, preview) => sum + (state.selectedVideoIdsByAccount.get(preview.accountKey)?.size || 0),
+    0,
+  );
+  return { total, selectedCount };
+}
+
 function updateSelectionSummary() {
-  const total = state.currentPreview?.videos.length || 0;
-  const selectedCount = state.selectedVideoIds.size;
+  const { total, selectedCount } = getSelectionTotals();
   el.selectionSummary.textContent = `已选择 ${selectedCount} / ${total} 条视频`;
   el.selectAllVideos.checked = total > 0 && selectedCount === total;
   el.selectAllVideos.indeterminate = selectedCount > 0 && selectedCount < total;
   el.confirmSelection.disabled = state.isCapturing || selectedCount === 0;
   el.cancelSelection.disabled = state.isCapturing;
+  el.selectionClose.disabled = state.isCapturing;
 }
 
 function renderSelectionList() {
   if (!state.currentPreview) {
     return;
   }
-  if (!state.currentPreview.videos.length) {
-    el.videoSelectionList.innerHTML = '<div class="empty">当前账号没有可采集的视频。</div>';
+  if (!state.currentPreview.previews?.length) {
+    el.videoSelectionList.innerHTML = '<div class="empty">没有可读取的账号配置。</div>';
     updateSelectionSummary();
     return;
   }
-  el.videoSelectionList.innerHTML = state.currentPreview.videos
-    .map((video) => {
-      const checked = state.selectedVideoIds.has(video.videoId) ? "checked" : "";
+  el.videoSelectionList.innerHTML = state.currentPreview.previews
+    .map((preview) => {
+      const accountKey = preview.accountKey;
+      const selectedIds = state.selectedVideoIdsByAccount.get(accountKey) || new Set();
+      const videosHtml = preview.ok && preview.videos.length
+        ? preview.videos
+            .map((video) => {
+              const checked = selectedIds.has(video.videoId) ? "checked" : "";
+              return `
+                <label class="video-option">
+                  <input type="checkbox" data-account-key="${escapeHtml(accountKey)}" data-video-id="${escapeHtml(video.videoId)}" ${checked} />
+                  <div class="video-option-body">
+                    <div class="video-option-title">${escapeHtml(cleanVideoTitle(video.description, video.title, video.videoId))}</div>
+                    <div class="video-option-meta">发布时间：${escapeHtml(formatTimestamp(video.publishTime))}</div>
+                    <div class="video-option-meta">videoId：${escapeHtml(video.videoId)}</div>
+                    <div class="video-option-meta">
+                      播放 ${formatNumber(video.metrics.playCount)} / 点赞 ${formatNumber(video.metrics.likeCount)} / 评论 ${formatNumber(video.metrics.commentCount)} / 分享 ${formatNumber(video.metrics.shareCount)}
+                    </div>
+                  </div>
+                </label>
+              `;
+            })
+            .join("")
+        : `<div class="empty">${escapeHtml(preview.message || "当前账号没有可采集的视频。")}</div>`;
       return `
-        <label class="video-option">
-          <input type="checkbox" data-video-id="${escapeHtml(video.videoId)}" ${checked} />
-          <div class="video-option-body">
-            <div class="video-option-title">${escapeHtml(cleanVideoTitle(video.description, video.title, video.videoId))}</div>
-            <div class="video-option-meta">发布时间：${escapeHtml(formatTimestamp(video.publishTime))}</div>
-            <div class="video-option-meta">videoId：${escapeHtml(video.videoId)}</div>
-            <div class="video-option-meta">
-              播放 ${formatNumber(video.metrics.playCount)} / 点赞 ${formatNumber(video.metrics.likeCount)} / 评论 ${formatNumber(video.metrics.commentCount)} / 分享 ${formatNumber(video.metrics.shareCount)}
+        <div class="selection-account-group">
+          <div class="selection-account-head">
+            <div>
+              <div class="selection-account-title">${escapeHtml(preview.accountLabel || preview.accountKey || "未知账号")}</div>
+              <div class="video-option-meta">${escapeHtml(preview.message || "")}</div>
             </div>
+            <span class="badge">${preview.ok ? `${preview.videos.length} 条视频` : "读取失败"}</span>
           </div>
-        </label>
+          <div class="selection-account-videos">${videosHtml}</div>
+        </div>
       `;
     })
     .join("");
 
-  el.videoSelectionList.querySelectorAll('input[type="checkbox"][data-video-id]').forEach((checkbox) => {
+  el.videoSelectionList.querySelectorAll('input[type="checkbox"][data-account-key][data-video-id]').forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
+      const accountKey = checkbox.dataset.accountKey;
       const videoId = checkbox.dataset.videoId;
-      if (!videoId) {
+      if (!accountKey || !videoId) {
         return;
       }
+      const selectedIds = state.selectedVideoIdsByAccount.get(accountKey) || new Set();
       if (checkbox.checked) {
-        state.selectedVideoIds.add(videoId);
+        selectedIds.add(videoId);
       } else {
-        state.selectedVideoIds.delete(videoId);
+        selectedIds.delete(videoId);
       }
+      state.selectedVideoIdsByAccount.set(accountKey, selectedIds);
       updateSelectionSummary();
     });
   });
   updateSelectionSummary();
 }
 
-function showSelectionPanel(preview) {
-  state.currentPreview = preview;
-  state.selectedVideoIds = new Set(defaultSelectedVideoIds(preview));
+function showSelectionPanel(previewPayload) {
+  state.currentPreview = previewPayload;
+  state.selectedVideoIdsByAccount = new Map();
+  (previewPayload.previews || []).forEach((preview) => {
+    state.selectedVideoIdsByAccount.set(preview.accountKey, new Set(defaultSelectedVideoIds(preview, preview)));
+  });
   el.selectionPanel.hidden = false;
-  el.selectionAccount.textContent = preview.accountLabel || "未知账号";
-  el.selectionStatus.textContent = `已读取 ${preview.videos.length} 条近期视频，请勾选本次要采集的内容。`;
+  el.selectionBackdrop.hidden = false;
+  document.body.classList.add("modal-open");
+  el.selectionAccount.textContent = `${previewPayload.previews?.length || 0} 个账号`;
+  el.selectionStatus.textContent = "已按账号读取近期视频，请勾选本次要采集的内容。";
   renderSelectionList();
 }
 
@@ -335,7 +545,11 @@ function renderVideoOptions(rows) {
     state.selectedVideoId = rows[0].videoId;
   }
   el.videoSelect.innerHTML = rows
-    .map((row) => `<option value="${escapeHtml(row.videoId)}">${escapeHtml(cleanVideoTitle(row.description, row.title, row.videoId))}</option>`)
+    .map((row) => {
+      const title = cleanVideoTitle(row.description, row.title, row.videoId);
+      const accountPrefix = row.accountLabel ? `【${row.accountLabel}】` : "";
+      return `<option value="${escapeHtml(row.videoId)}">${escapeHtml(`${accountPrefix}${title}`)}</option>`;
+    })
     .join("");
   el.videoSelect.value = state.selectedVideoId;
 }
@@ -362,6 +576,7 @@ function renderSummary(rows, windowMinutes) {
         <tr>
           <td>
             <div>${escapeHtml(cleanVideoTitle(row.description, row.title, row.videoId))}</div>
+            <div class="muted">${escapeHtml(row.accountLabel || "-")}</div>
             <div class="muted">${escapeHtml(row.videoId)}</div>
           </td>
           ${cells}
@@ -704,14 +919,14 @@ async function refreshBootstrap() {
   const payload = await apiGet("/api/bootstrap");
   state.status = payload.status;
   state.settings = payload.settings;
+  state.accountStatuses = payload.accountStatuses || [];
   state.recentSnapshots = payload.recentSnapshots || [];
   state.hasCaptureHistory = Boolean(payload.hasCaptureHistory);
-  renderStatus();
+  el.lastError.textContent = state.status?.lastError || "无";
   if (shouldSyncForm) {
     renderSettings();
   }
   renderRecentSnapshots();
-  renderPrimaryButton();
 }
 
 async function refreshAll() {
@@ -719,59 +934,50 @@ async function refreshAll() {
   await refreshDashboard();
 }
 
-async function beginCaptureSetup() {
+async function beginCaptureSetup(accountKey = null) {
+  if (accountKey && !getSavedAccount(accountKey)) {
+    el.lastError.textContent = "请先保存账号配置，再选择视频。";
+    return;
+  }
   state.isCapturing = true;
-  renderPrimaryButton();
+  renderAccountEditors(getSettingsAccounts(state.settings));
   el.lastError.textContent = "正在读取账号和近期视频...";
   try {
-    const response = await apiPost("/api/capture/prepare");
-    showSelectionPanel(response.preview);
+    const body = accountKey ? { accountKeys: [accountKey] } : {};
+    const response = await apiPost("/api/capture/prepare", body);
+    showSelectionPanel(response);
     el.lastError.textContent = "无";
   } catch (error) {
     el.lastError.textContent = error.message;
     hideSelectionPanel();
   } finally {
     state.isCapturing = false;
-    renderPrimaryButton();
+    renderAccountEditors(getSettingsAccounts(state.settings));
     updateSelectionSummary();
   }
 }
-
-el.captureButton.addEventListener("click", async () => {
-  if (state.isCapturing) {
-    return;
-  }
-  if (state.settings?.capturePaused || !state.hasCaptureHistory) {
-    await beginCaptureSetup();
-    return;
-  }
-  await apiPost("/api/capture/pause", { paused: true });
-  await refreshAll();
-});
-
-el.runNowButton.addEventListener("click", async () => {
-  try {
-    await apiPost("/api/capture/run");
-    await refreshAll();
-  } catch (error) {
-    el.lastError.textContent = error.message;
-  }
-});
 
 el.refreshAllButton.addEventListener("click", async () => {
   await refreshAll();
 });
 
+el.addAccountButton.addEventListener("click", () => {
+  addAccountEditor();
+});
+
 el.settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
+    const accounts = collectAccountSettings();
+    if (!accounts.length) {
+      throw new Error("请至少添加一个账号 Cookie。");
+    }
     await apiPost("/api/settings", {
       pollIntervalMinutes: Number(el.pollInterval.value || 1),
       defaultCompareWindowMinutes: Number(el.compareWindow.value || 5),
       retentionDays: Number(el.retentionDays.value || 30),
       targetUrl: el.targetUrl.value,
-      sessionCookie: el.sessionCookie.value,
-      accountLabelHint: el.accountLabelHint.value,
+      accounts,
       requestTimeoutSeconds: Number(el.requestTimeout.value || 20),
     });
     el.saveStatus.textContent = `保存成功：${new Date().toLocaleString()}`;
@@ -786,21 +992,29 @@ el.selectAllVideos.addEventListener("change", () => {
     return;
   }
   if (el.selectAllVideos.checked) {
-    state.selectedVideoIds = new Set(state.currentPreview.videos.map((item) => item.videoId));
+    getSelectablePreviews().forEach((preview) => {
+      state.selectedVideoIdsByAccount.set(preview.accountKey, new Set(preview.videos.map((item) => item.videoId)));
+    });
   } else {
-    state.selectedVideoIds = new Set();
+    state.selectedVideoIdsByAccount = new Map();
   }
   renderSelectionList();
 });
 
 el.confirmSelection.addEventListener("click", async () => {
-  if (!state.currentPreview || state.isCapturing || state.selectedVideoIds.size === 0) {
+  const selectedAccounts = getSelectablePreviews()
+    .map((preview) => ({
+      accountKey: preview.accountKey,
+      selectedVideoIds: Array.from(state.selectedVideoIdsByAccount.get(preview.accountKey) || []),
+    }))
+    .filter((item) => item.selectedVideoIds.length > 0);
+  if (!state.currentPreview || state.isCapturing || selectedAccounts.length === 0) {
     return;
   }
   state.isCapturing = true;
-  renderPrimaryButton();
+  renderAccountEditors(getSettingsAccounts(state.settings));
   try {
-    await apiPost("/api/capture/start", { selectedVideoIds: Array.from(state.selectedVideoIds) });
+    await apiPost("/api/capture/start", { accounts: selectedAccounts });
     hideSelectionPanel();
     await refreshAll();
   } catch (error) {
@@ -808,12 +1022,30 @@ el.confirmSelection.addEventListener("click", async () => {
     el.lastError.textContent = error.message;
   } finally {
     state.isCapturing = false;
-    renderPrimaryButton();
+    renderAccountEditors(getSettingsAccounts(state.settings));
   }
 });
 
 el.cancelSelection.addEventListener("click", () => {
   hideSelectionPanel();
+});
+
+el.selectionClose.addEventListener("click", () => {
+  if (!state.isCapturing) {
+    hideSelectionPanel();
+  }
+});
+
+el.selectionBackdrop.addEventListener("click", () => {
+  if (!state.isCapturing) {
+    hideSelectionPanel();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !el.selectionPanel.hidden && !state.isCapturing) {
+    hideSelectionPanel();
+  }
 });
 
 el.windowMinutes.addEventListener("change", refreshDashboard);

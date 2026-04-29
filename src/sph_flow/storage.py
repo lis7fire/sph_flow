@@ -285,6 +285,8 @@ class Storage:
             rows.append(
                 VideoWindowStats(
                     video_id=video.video_id,
+                    account_id=video.account_id,
+                    account_label=video.account_label,
                     title=video.title,
                     description=video.description,
                     publish_time=video.publish_time,

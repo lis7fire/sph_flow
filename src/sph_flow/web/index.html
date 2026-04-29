@@ -15,39 +15,11 @@
           <p class="hero-copy">本地 Python 版，支持后台周期采集、周期增量汇总、折线图查看和 Excel 导出。</p>
         </div>
         <div class="hero-actions">
-          <button id="capture-button" class="primary">开始采集</button>
-          <button id="run-now-button" class="secondary">立即采集</button>
           <a id="export-button" class="secondary link-button" href="/api/export.xlsx">导出 Excel</a>
         </div>
       </header>
 
       <main class="grid">
-        <section class="panel status-panel">
-          <div class="panel-title-row">
-            <h2>运行状态</h2>
-            <button id="refresh-all-button" class="ghost">刷新</button>
-          </div>
-          <div class="status-list">
-            <div>
-              <span>当前账号</span>
-              <strong id="account-label">-</strong>
-            </div>
-            <div>
-              <span>上次运行</span>
-              <strong id="last-run">-</strong>
-            </div>
-            <div>
-              <span>上次成功</span>
-              <strong id="last-success">-</strong>
-            </div>
-            <div>
-              <span>采集范围</span>
-              <strong id="capture-scope">-</strong>
-            </div>
-          </div>
-          <div class="notice error" id="last-error">无</div>
-        </section>
-
         <section class="panel settings-panel">
           <h2>采集设置</h2>
           <form id="settings-form">
@@ -73,18 +45,20 @@
               <span>目标页面</span>
               <input id="target-url" type="url" required />
             </label>
-            <label>
-              <span>账号名称补充</span>
-              <input id="account-label-hint" type="text" placeholder="接口拿不到昵称时可手动填写" />
-            </label>
-            <label>
-              <span>视频号后台 Cookie</span>
-              <textarea
-                id="session-cookie"
-                rows="4"
-                placeholder="从视频号后台请求头里复制完整 Cookie。首版 Python 迁移版用它来替代扩展里的浏览器会话。"
-              ></textarea>
-            </label>
+            <div class="accounts-config">
+              <div class="subsection-title-row">
+                <div>
+                  <h3>账号配置</h3>
+                  <p class="muted">每个视频号账号添加一组 Cookie；后台会按账号逐个采集。</p>
+                </div>
+                <div class="subsection-actions">
+                  <button id="refresh-all-button" type="button" class="ghost">刷新状态</button>
+                  <button id="add-account-button" type="button" class="secondary">添加账号</button>
+                </div>
+              </div>
+              <div id="accounts-list" class="accounts-list"></div>
+              <div class="notice error" id="last-error">无</div>
+            </div>
             <div class="form-actions">
               <button type="submit" class="primary">保存设置</button>
               <span id="save-status" class="muted"></span>
@@ -92,12 +66,18 @@
           </form>
         </section>
 
-        <section class="panel selection-panel" id="selection-panel" hidden>
+        <div id="selection-backdrop" class="modal-backdrop" hidden></div>
+        <section class="panel selection-panel" id="selection-panel" role="dialog" aria-modal="true" aria-labelledby="selection-title" hidden>
           <div class="panel-title-row">
-            <h2>采集前确认</h2>
-            <span id="selection-account" class="badge">-</span>
+            <div>
+              <h2 id="selection-title">采集前确认</h2>
+              <p id="selection-status" class="muted">先读取近期视频，再选择本次要采集的内容。</p>
+            </div>
+            <div class="modal-title-actions">
+              <span id="selection-account" class="badge">多账号</span>
+              <button id="selection-close" type="button" class="ghost modal-close">关闭</button>
+            </div>
           </div>
-          <p id="selection-status" class="muted">先读取近期视频，再选择本次要采集的内容。</p>
           <div class="selection-toolbar">
             <label class="check-inline">
               <input id="select-all-videos" type="checkbox" />
