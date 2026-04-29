@@ -3,10 +3,20 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from urllib import parse, request
 
-from sph_flow.models import CapturePreparationResult, CaptureRunResult, CapturedVideo, MonitorSettings, VideoMetrics
+from sph_flow.models import (
+    CapturePreparationResult,
+    CaptureRunResult,
+    CapturedVideo,
+    MonitorSettings,
+    VideoMetrics,
+    normalize_optional_video_title_text,
+    normalize_video_title_text,
+    parse_datetime_value,
+)
 
 
 @dataclass(slots=True)
@@ -239,14 +249,8 @@ class WeixinChannelCollector:
             return 0.0
         return numeric * 100 if numeric <= 1 else numeric
 
-    def _to_milliseconds(self, value: Any) -> int | None:
-        try:
-            numeric = int(float(value))
-        except (TypeError, ValueError):
-            return None
-        if numeric <= 0:
-            return None
-        return numeric if numeric > 10_000_000_000 else numeric * 1000
+    def _to_datetime(self, value: Any) -> datetime | None:
+        return parse_datetime_value(value)
 
     def _clean_text(self, value: Any) -> str:
         return " ".join(str(value or "").split()).strip()
@@ -273,8 +277,7 @@ class WeixinChannelCollector:
             or self._extract_text_field(item.get("feedDesc"))
             or self._extract_text_field(item.get("objectDesc"))
         )
-        cleaned = self._clean_text(description)
-        return cleaned or None
+        return normalize_optional_video_title_text(description)
 
     def _pick_log_finder_id(self, item: dict[str, Any]) -> str | None:
         value = item.get("logFinderId") or item.get("log_finder_id") or item.get("_log_finder_id")
@@ -285,7 +288,7 @@ class WeixinChannelCollector:
         description = self._pick_video_description(item)
         if description:
             return description
-        title = self._clean_text(
+        title = normalize_video_title_text(
             self._extract_text_field(item.get("title")) or item.get("exportId") or item.get("objectId") or "未命名视频"
         )
         return title or "未命名视频"
@@ -294,7 +297,7 @@ class WeixinChannelCollector:
         return _PostListItem(
             title=self._pick_video_title(item),
             description=self._pick_video_description(item),
-            publish_time=self._to_milliseconds(item.get("createTime")),
+            publish_time=self._to_datetime(item.get("createTime")),
             export_id=item.get("exportId"),
             object_id=item.get("objectId"),
             log_finder_id=self._pick_log_finder_id(item),
@@ -364,7 +367,7 @@ class WeixinChannelCollector:
 class _PostListItem:
     title: str
     description: str | None
-    publish_time: int | None
+    publish_time: datetime | None
     export_id: str | None
     object_id: str | None
     log_finder_id: str | None

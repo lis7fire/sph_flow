@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+DISPLAY_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+DISPLAY_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 @dataclass(slots=True)
@@ -70,8 +74,8 @@ class VideoSnapshot:
     account_label: str | None = None
     video_title: str = ""
     description: str | None = None
-    publish_time: int | None = None
-    captured_at: int = 0
+    publish_time: datetime | None = None
+    captured_at: datetime | None = None
     metrics: VideoMetrics = field(default_factory=VideoMetrics)
     source_page: str | None = None
 
@@ -87,8 +91,8 @@ class VideoSnapshot:
                 "account_label": self.account_label,
                 "video_title": self.video_title,
                 "description": self.description,
-                "publish_time": self.publish_time,
-                "captured_at": self.captured_at,
+                "publish_time": format_datetime_text(self.publish_time),
+                "captured_at": format_datetime_text(self.captured_at),
                 "metrics": self.metrics.to_dict(),
                 "source_page": self.source_page,
             }
@@ -102,8 +106,8 @@ class VideoSnapshot:
             "accountLabel": self.account_label,
             "videoTitle": self.video_title,
             "description": self.description,
-            "publishTime": self.publish_time,
-            "capturedAt": self.captured_at,
+            "publishTime": format_datetime_text(self.publish_time),
+            "capturedAt": format_datetime_text(self.captured_at),
             "metrics": self.metrics.to_dict(camel=True),
             "sourcePage": self.source_page,
         }
@@ -119,8 +123,8 @@ class VideoRecord:
     account_label: str | None = None
     title: str = ""
     description: str | None = None
-    publish_time: int | None = None
-    last_captured_at: int = 0
+    publish_time: datetime | None = None
+    last_captured_at: datetime | None = None
     last_metrics: VideoMetrics = field(default_factory=VideoMetrics)
 
     def to_dict(self, *, camel: bool = False) -> dict[str, Any]:
@@ -134,8 +138,8 @@ class VideoRecord:
                 "account_label": self.account_label,
                 "title": self.title,
                 "description": self.description,
-                "publish_time": self.publish_time,
-                "last_captured_at": self.last_captured_at,
+                "publish_time": format_datetime_text(self.publish_time),
+                "last_captured_at": format_datetime_text(self.last_captured_at),
                 "last_metrics": self.last_metrics.to_dict(),
             }
         return {
@@ -147,8 +151,8 @@ class VideoRecord:
             "accountLabel": self.account_label,
             "title": self.title,
             "description": self.description,
-            "publishTime": self.publish_time,
-            "lastCapturedAt": self.last_captured_at,
+            "publishTime": format_datetime_text(self.publish_time),
+            "lastCapturedAt": format_datetime_text(self.last_captured_at),
             "lastMetrics": self.last_metrics.to_dict(camel=True),
         }
 
@@ -223,30 +227,35 @@ class MonitorSettings:
 
 @dataclass(slots=True)
 class CaptureStatus:
-    last_run_at: int | None = None
-    last_success_at: int | None = None
+    last_run_at: datetime | None = None
+    last_success_at: datetime | None = None
     last_error: str | None = None
     last_message: str | None = None
     account_label: str | None = None
 
     def to_dict(self, *, camel: bool = False) -> dict[str, Any]:
-        payload = asdict(self)
         if not camel:
-            return payload
+            return {
+                "last_run_at": format_datetime_text(self.last_run_at),
+                "last_success_at": format_datetime_text(self.last_success_at),
+                "last_error": self.last_error,
+                "last_message": self.last_message,
+                "account_label": self.account_label,
+            }
         return {
-            "lastRunAt": payload["last_run_at"],
-            "lastSuccessAt": payload["last_success_at"],
-            "lastError": payload["last_error"],
-            "lastMessage": payload["last_message"],
-            "accountLabel": payload["account_label"],
+            "lastRunAt": format_datetime_text(self.last_run_at),
+            "lastSuccessAt": format_datetime_text(self.last_success_at),
+            "lastError": self.last_error,
+            "lastMessage": self.last_message,
+            "accountLabel": self.account_label,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> "CaptureStatus":
         data = payload or {}
         return cls(
-            last_run_at=data.get("last_run_at", data.get("lastRunAt")),
-            last_success_at=data.get("last_success_at", data.get("lastSuccessAt")),
+            last_run_at=parse_datetime_value(data.get("last_run_at", data.get("lastRunAt"))),
+            last_success_at=parse_datetime_value(data.get("last_success_at", data.get("lastSuccessAt"))),
             last_error=_normalize_optional_text(data.get("last_error", data.get("lastError"))),
             last_message=_normalize_optional_text(data.get("last_message", data.get("lastMessage"))),
             account_label=_normalize_optional_text(data.get("account_label", data.get("accountLabel"))),
@@ -280,23 +289,23 @@ class WindowStats:
 class VideoWindowStats(WindowStats):
     title: str = ""
     description: str | None = None
-    publish_time: int | None = None
-    last_captured_at: int = 0
-    window_start: int = 0
-    window_end: int = 0
+    publish_time: datetime | None = None
+    last_captured_at: datetime | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
     has_enough_data: bool = False
 
     def to_dict(self, *, camel: bool = False) -> dict[str, Any]:
-        payload = super().to_dict(camel=camel)
+        payload = WindowStats.to_dict(self, camel=camel)
         if not camel:
             payload.update(
                 {
                     "title": self.title,
                     "description": self.description,
-                    "publish_time": self.publish_time,
-                    "last_captured_at": self.last_captured_at,
-                    "window_start": self.window_start,
-                    "window_end": self.window_end,
+                    "publish_time": format_datetime_text(self.publish_time),
+                    "last_captured_at": format_datetime_text(self.last_captured_at),
+                    "window_start": format_datetime_text(self.window_start),
+                    "window_end": format_datetime_text(self.window_end),
                     "has_enough_data": self.has_enough_data,
                 }
             )
@@ -305,10 +314,10 @@ class VideoWindowStats(WindowStats):
             {
                 "title": self.title,
                 "description": self.description,
-                "publishTime": self.publish_time,
-                "lastCapturedAt": self.last_captured_at,
-                "windowStart": self.window_start,
-                "windowEnd": self.window_end,
+                "publishTime": format_datetime_text(self.publish_time),
+                "lastCapturedAt": format_datetime_text(self.last_captured_at),
+                "windowStart": format_datetime_text(self.window_start),
+                "windowEnd": format_datetime_text(self.window_end),
                 "hasEnoughData": self.has_enough_data,
             }
         )
@@ -325,7 +334,7 @@ class CapturedVideo:
     account_label: str | None = None
     title: str = ""
     description: str | None = None
-    publish_time: int | None = None
+    publish_time: datetime | None = None
     metrics: VideoMetrics = field(default_factory=VideoMetrics)
 
     def to_dict(self, *, camel: bool = False) -> dict[str, Any]:
@@ -339,7 +348,7 @@ class CapturedVideo:
                 "account_label": self.account_label,
                 "title": self.title,
                 "description": self.description,
-                "publish_time": self.publish_time,
+                "publish_time": format_datetime_text(self.publish_time),
                 "metrics": self.metrics.to_dict(),
             }
         return {
@@ -351,7 +360,7 @@ class CapturedVideo:
             "accountLabel": self.account_label,
             "title": self.title,
             "description": self.description,
-            "publishTime": self.publish_time,
+            "publishTime": format_datetime_text(self.publish_time),
             "metrics": self.metrics.to_dict(camel=True),
         }
 
@@ -390,3 +399,87 @@ class CaptureRunResult(CapturePreparationResult):
 def _normalize_optional_text(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def normalize_video_title_text(value: Any) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return ""
+    prefix, _, _ = text.partition("#")
+    normalized = prefix.strip()
+    return normalized or text
+
+
+def normalize_optional_video_title_text(value: Any) -> str | None:
+    text = normalize_video_title_text(value)
+    return text or None
+
+
+def parse_datetime_value(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _coerce_display_timezone(value)
+    if isinstance(value, (int, float)):
+        return _datetime_from_unix_number(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if _looks_like_number(text):
+            return _datetime_from_unix_number(float(text))
+        try:
+            return datetime.strptime(text, DISPLAY_DATETIME_FORMAT).replace(tzinfo=DISPLAY_TIMEZONE)
+        except ValueError:
+            pass
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return _coerce_display_timezone(parsed)
+    return None
+
+
+def format_datetime_text(value: Any) -> str | None:
+    parsed = parse_datetime_value(value)
+    if parsed is None:
+        return None
+    return parsed.strftime(DISPLAY_DATETIME_FORMAT)
+
+
+def now_display_time() -> datetime:
+    return datetime.now(tz=DISPLAY_TIMEZONE).replace(microsecond=0)
+
+
+def normalize_datetime_to_minute(value: Any) -> datetime:
+    parsed = parse_datetime_value(value) or now_display_time()
+    return parsed.replace(second=0, microsecond=0)
+
+
+def to_epoch_millis(value: Any) -> int:
+    parsed = parse_datetime_value(value)
+    if parsed is None:
+        return 0
+    return int(parsed.timestamp() * 1000)
+
+
+def _coerce_display_timezone(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=DISPLAY_TIMEZONE)
+    return value.astimezone(DISPLAY_TIMEZONE)
+
+
+def _datetime_from_unix_number(value: int | float) -> datetime | None:
+    try:
+        numeric = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if numeric <= 0:
+        return None
+    timestamp = numeric / 1000 if numeric > 10_000_000_000 else numeric
+    return datetime.fromtimestamp(timestamp, tz=DISPLAY_TIMEZONE)
+
+
+def _looks_like_number(value: str) -> bool:
+    candidate = value.replace(".", "", 1).replace("-", "", 1)
+    return bool(candidate) and candidate.isdigit()

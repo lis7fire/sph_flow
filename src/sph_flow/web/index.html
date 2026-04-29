@@ -113,9 +113,9 @@
         </section>
 
         <section class="panel chart-panel">
-          <div class="panel-title-row">
-            <div>
-              <h2 id="chart-title">新增趋势</h2>
+          <div class="panel-title-row chart-title-row">
+            <div class="chart-heading">
+              <h2 id="chart-title">趋势</h2>
               <p id="chart-meta" class="muted"></p>
             </div>
             <div class="chart-controls">
@@ -124,26 +124,12 @@
                 <input id="window-minutes" type="number" min="1" value="5" />
               </label>
               <label>
-                <span>指标</span>
-                <select id="metric-select">
-                  <option value="playCount">播放量</option>
-                  <option value="likeCount">点赞量</option>
-                  <option value="commentCount">评论量</option>
-                  <option value="shareCount">分享量</option>
-                  <option value="followCount">关注量</option>
-                </select>
-              </label>
-              <label>
                 <span>视频</span>
                 <select id="video-select"></select>
               </label>
             </div>
           </div>
-          <div class="chart-wrapper">
-            <svg id="trend-chart"></svg>
-            <div id="chart-empty" class="chart-empty">暂无数据</div>
-            <div id="chart-tooltip" class="chart-tooltip" hidden></div>
-          </div>
+          <div id="chart-list" class="chart-list"></div>
         </section>
 
         <section class="panel summary-panel">

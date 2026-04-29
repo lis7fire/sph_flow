@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="4e7737b3-54ca-4e74-9e02-dff67984f3b0" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/sph_flow.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
+    <list default="true" id="4e7737b3-54ca-4e74-9e02-dff67984f3b0" name="更改" comment="重构，流控程序">
+      <change beforePath="$PROJECT_DIR$/.idea/sph_flow.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/sph_flow.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/analytics.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/analytics.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/collector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/collector.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/server.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/server.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/service.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/storage.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/storage.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/web/app.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/web/app.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/web/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/web/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/web/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/web/styles.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sph_flow/xlsx_export.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/sph_flow/xlsx_export.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -18,10 +23,10 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 6,
-  "fromUser": false
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 6,
+  &quot;fromUser&quot;: false
+}</component>
   <component name="ProjectId" id="3D1HmIaqdoEZElsuckz02cKChaD" />
   <component name="ProjectViewState">
     <option name="autoscrollFromSource" value="true" />
@@ -30,20 +35,20 @@
     <option name="showExcludedFiles" value="false" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "main",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -58,19 +63,42 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1776826985711</updated>
-      <workItem from="1777442813691" duration="2181000" />
+      <workItem from="1777442813691" duration="7388000" />
+      <workItem from="1777454975076" duration="2004000" />
     </task>
+    <task id="LOCAL-00001" summary="初始化项目">
+      <option name="closed" value="true" />
+      <created>1777445283581</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1777445283581</updated>
+    </task>
+    <task id="LOCAL-00002" summary="重构，流控程序">
+      <option name="closed" value="true" />
+      <created>1777449777666</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1777449777666</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="初始化项目" />
+    <MESSAGE value="重构，流控程序" />
+    <option name="LAST_COMMIT_MESSAGE" value="重构，流控程序" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
       <breakpoints>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/main.py</url>
-          <line>8</line>
+          <line>9</line>
           <option name="timeStamp" value="1" />
         </line-breakpoint>
       </breakpoints>

@@ -4,7 +4,7 @@ from io import BytesIO
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from sph_flow.models import VideoSnapshot
+from sph_flow.models import VideoSnapshot, format_datetime_text
 
 
 def build_snapshots_workbook(rows: list[VideoSnapshot]) -> bytes:
@@ -160,9 +160,5 @@ def _column_name(index: int) -> str:
     return "".join(reversed(letters))
 
 
-def _format_timestamp(value: int | None) -> str:
-    if not value:
-        return ""
-    from datetime import datetime
-
-    return datetime.fromtimestamp(value / 1000).strftime("%Y-%m-%d %H:%M:%S")
+def _format_timestamp(value: object) -> str:
+    return format_datetime_text(value) or ""

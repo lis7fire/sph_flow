@@ -133,6 +133,32 @@ a {
   margin-bottom: 16px;
 }
 
+.chart-title-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.chart-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.chart-heading h2 {
+  line-height: 1.25;
+}
+
+.chart-heading p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -300,27 +326,64 @@ button:hover,
 }
 
 .chart-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: 120px minmax(260px, 1fr);
   gap: 14px;
-  flex-wrap: wrap;
+  align-items: end;
 }
 
 .chart-controls label {
   margin: 0;
-  min-width: 140px;
+  min-width: 0;
+}
+
+.chart-list {
+  display: grid;
+  gap: 24px;
+}
+
+.chart-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(132, 111, 84, 0.16);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 252, 0.62)),
+    rgba(255, 255, 255, 0.55);
+  box-shadow: 0 14px 28px rgba(64, 49, 31, 0.06);
+}
+
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.chart-card-title {
+  margin: 0;
+  font-size: 17px;
+}
+
+.chart-card-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .chart-wrapper {
   position: relative;
-  min-height: 380px;
+  min-height: 340px;
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(240, 249, 255, 0.82));
   overflow: hidden;
 }
 
-#trend-chart {
+.chart-svg {
   width: 100%;
-  height: 380px;
+  height: 340px;
   display: block;
 }
 
@@ -330,6 +393,11 @@ button:hover,
   display: grid;
   place-items: center;
   color: var(--muted);
+  z-index: 1;
+}
+
+.chart-empty[hidden] {
+  display: none;
 }
 
 .chart-tooltip {
@@ -341,6 +409,11 @@ button:hover,
   white-space: pre-line;
   pointer-events: none;
   font-size: 13px;
+  z-index: 2;
+}
+
+.chart-tooltip[hidden] {
+  display: none;
 }
 
 .table-wrap {
@@ -403,6 +476,10 @@ td.number {
     grid-column: span 12;
   }
 
+  .chart-title-row {
+    grid-template-columns: 1fr;
+  }
+
   .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -424,6 +501,6 @@ td.number {
   }
 
   .chart-controls {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 }

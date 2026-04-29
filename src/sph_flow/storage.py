@@ -3,12 +3,26 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from sph_flow.analytics import create_snapshot_id, diff_metrics, normalize_timestamp_to_minute
-from sph_flow.models import CaptureStatus, MetricsDelta, MonitorSettings, VideoMetrics, VideoRecord, VideoSnapshot, VideoWindowStats
+from sph_flow.models import (
+    CaptureStatus,
+    MetricsDelta,
+    MonitorSettings,
+    VideoMetrics,
+    VideoRecord,
+    VideoSnapshot,
+    VideoWindowStats,
+    format_datetime_text,
+    normalize_optional_video_title_text,
+    normalize_video_title_text,
+    now_display_time,
+    parse_datetime_value,
+    to_epoch_millis,
+)
 
 
 class Storage:
@@ -48,8 +62,8 @@ class Storage:
                     account_label TEXT,
                     title TEXT NOT NULL,
                     description TEXT,
-                    publish_time INTEGER,
-                    last_captured_at INTEGER NOT NULL,
+                    publish_time TEXT,
+                    last_captured_at TEXT NOT NULL,
                     completion_rate REAL NOT NULL,
                     avg_play_time_seconds REAL NOT NULL,
                     play_count INTEGER NOT NULL,
@@ -73,8 +87,8 @@ class Storage:
                     account_label TEXT,
                     video_title TEXT NOT NULL,
                     description TEXT,
-                    publish_time INTEGER,
-                    captured_at INTEGER NOT NULL,
+                    publish_time TEXT,
+                    captured_at TEXT NOT NULL,
                     source_page TEXT,
                     completion_rate REAL NOT NULL,
                     avg_play_time_seconds REAL NOT NULL,
@@ -94,6 +108,7 @@ class Storage:
                 CREATE INDEX IF NOT EXISTS idx_snapshots_video_captured ON snapshots(video_id, captured_at);
                 """
             )
+            self._migrate_legacy_time_values(connection)
 
     def get_settings(self) -> MonitorSettings:
         with self._lock, self._connect() as connection:
@@ -142,12 +157,19 @@ class Storage:
         account_label: str | None,
         video_title: str,
         description: str | None,
-        publish_time: int | None,
+        publish_time: Any,
         metrics: VideoMetrics,
         source_page: str | None,
-        captured_at: int | None = None,
+        captured_at: Any = None,
     ) -> VideoSnapshot:
-        normalized_captured_at = normalize_timestamp_to_minute(captured_at or _now_ms())
+        normalized_captured_at = normalize_timestamp_to_minute(captured_at or now_display_time())
+        normalized_title = (
+            normalize_video_title_text(video_title)
+            or normalize_video_title_text(description)
+            or str(video_id).strip()
+            or "未命名视频"
+        )
+        normalized_description = normalize_optional_video_title_text(description)
         snapshot = VideoSnapshot(
             id=create_snapshot_id(video_id, normalized_captured_at),
             video_id=video_id,
@@ -156,9 +178,9 @@ class Storage:
             log_finder_id=log_finder_id,
             account_id=account_id,
             account_label=account_label,
-            video_title=video_title,
-            description=description,
-            publish_time=publish_time,
+            video_title=normalized_title,
+            description=normalized_description,
+            publish_time=parse_datetime_value(publish_time),
             captured_at=normalized_captured_at,
             metrics=metrics,
             source_page=source_page,
@@ -203,9 +225,9 @@ class Storage:
                         log_finder_id=log_finder_id,
                         account_id=account_id,
                         account_label=account_label,
-                        title=video_title,
-                        description=description,
-                        publish_time=publish_time,
+                        title=normalized_title,
+                        description=normalized_description,
+                        publish_time=parse_datetime_value(publish_time),
                         last_captured_at=normalized_captured_at,
                         last_metrics=metrics,
                     )
@@ -236,7 +258,10 @@ class Storage:
             ).fetchall()
         return [_snapshot_from_row(row) for row in rows]
 
-    def get_latest_snapshot_before(self, video_id: str, timestamp: int) -> VideoSnapshot | None:
+    def get_latest_snapshot_before(self, video_id: str, timestamp: Any) -> VideoSnapshot | None:
+        boundary = format_datetime_text(timestamp)
+        if not boundary:
+            return None
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 """
@@ -245,13 +270,13 @@ class Storage:
                 ORDER BY captured_at DESC
                 LIMIT 1
                 """,
-                (video_id, timestamp),
+                (video_id, boundary),
             ).fetchone()
         return _snapshot_from_row(row) if row else None
 
-    def list_window_stats(self, window_minutes: int, end_time: int | None = None) -> list[VideoWindowStats]:
-        normalized_end = normalize_timestamp_to_minute(end_time or _now_ms())
-        window_start = normalized_end - max(1, window_minutes) * 60_000
+    def list_window_stats(self, window_minutes: int, end_time: Any = None) -> list[VideoWindowStats]:
+        normalized_end = normalize_timestamp_to_minute(end_time or now_display_time())
+        window_start = normalized_end - timedelta(minutes=max(1, window_minutes))
         rows: list[VideoWindowStats] = []
         for video in self.list_videos():
             start_snapshot = self.get_latest_snapshot_before(video.video_id, window_start)
@@ -277,13 +302,64 @@ class Storage:
                     has_enough_data=has_enough_data,
                 )
             )
-        rows.sort(key=lambda item: (not item.has_enough_data, -item.delta.play_count, -item.last_captured_at))
+        rows.sort(key=lambda item: (not item.has_enough_data, -item.delta.play_count, -to_epoch_millis(item.last_captured_at)))
         return rows
 
     def prune_expired_snapshots(self, retention_days: int) -> None:
-        cutoff = _now_ms() - max(1, retention_days) * 24 * 60 * 60 * 1000
+        cutoff = now_display_time() - timedelta(days=max(1, retention_days))
         with self._lock, self._connect() as connection:
-            connection.execute("DELETE FROM snapshots WHERE captured_at <= ?", (cutoff,))
+            connection.execute("DELETE FROM snapshots WHERE captured_at <= ?", (format_datetime_text(cutoff),))
+
+    def _migrate_legacy_time_values(self, connection: sqlite3.Connection) -> None:
+        for row in connection.execute("SELECT id, publish_time, captured_at FROM snapshots").fetchall():
+            publish_time = format_datetime_text(row["publish_time"])
+            captured_at = format_datetime_text(row["captured_at"])
+            if publish_time != row["publish_time"] or captured_at != row["captured_at"]:
+                connection.execute(
+                    "UPDATE snapshots SET publish_time = ?, captured_at = ? WHERE id = ?",
+                    (publish_time, captured_at, row["id"]),
+                )
+
+        for row in connection.execute("SELECT video_id, publish_time, last_captured_at FROM videos").fetchall():
+            publish_time = format_datetime_text(row["publish_time"])
+            last_captured_at = format_datetime_text(row["last_captured_at"])
+            if publish_time != row["publish_time"] or last_captured_at != row["last_captured_at"]:
+                connection.execute(
+                    "UPDATE videos SET publish_time = ?, last_captured_at = ? WHERE video_id = ?",
+                    (publish_time, last_captured_at, row["video_id"]),
+                )
+
+        status_row = connection.execute("SELECT value FROM status WHERE key = ?", ("capture-status",)).fetchone()
+        if status_row:
+            try:
+                payload = json.loads(status_row["value"])
+            except json.JSONDecodeError:
+                payload = None
+            if payload is not None:
+                normalized = json.dumps(CaptureStatus.from_dict(payload).to_dict(), ensure_ascii=False)
+                if normalized != status_row["value"]:
+                    connection.execute(
+                        "REPLACE INTO status(key, value) VALUES(?, ?)",
+                        ("capture-status", normalized),
+                    )
+
+        for row in connection.execute("SELECT id, video_title, description FROM snapshots").fetchall():
+            video_title = normalize_video_title_text(row["video_title"]) or "未命名视频"
+            description = normalize_optional_video_title_text(row["description"])
+            if video_title != row["video_title"] or description != row["description"]:
+                connection.execute(
+                    "UPDATE snapshots SET video_title = ?, description = ? WHERE id = ?",
+                    (video_title, description, row["id"]),
+                )
+
+        for row in connection.execute("SELECT video_id, title, description FROM videos").fetchall():
+            title = normalize_video_title_text(row["title"]) or "未命名视频"
+            description = normalize_optional_video_title_text(row["description"])
+            if title != row["title"] or description != row["description"]:
+                connection.execute(
+                    "UPDATE videos SET title = ?, description = ? WHERE video_id = ?",
+                    (title, description, row["video_id"]),
+                )
 
 
 def _snapshot_db_params(snapshot: VideoSnapshot) -> dict[str, Any]:
@@ -298,8 +374,8 @@ def _snapshot_db_params(snapshot: VideoSnapshot) -> dict[str, Any]:
         "account_label": snapshot.account_label,
         "video_title": snapshot.video_title,
         "description": snapshot.description,
-        "publish_time": snapshot.publish_time,
-        "captured_at": snapshot.captured_at,
+        "publish_time": format_datetime_text(snapshot.publish_time),
+        "captured_at": format_datetime_text(snapshot.captured_at),
         "source_page": snapshot.source_page,
         "completion_rate": metrics.completion_rate,
         "avg_play_time_seconds": metrics.avg_play_time_seconds,
@@ -326,8 +402,8 @@ def _video_db_params(video: VideoRecord) -> dict[str, Any]:
         "account_label": video.account_label,
         "title": video.title,
         "description": video.description,
-        "publish_time": video.publish_time,
-        "last_captured_at": video.last_captured_at,
+        "publish_time": format_datetime_text(video.publish_time),
+        "last_captured_at": format_datetime_text(video.last_captured_at),
         "completion_rate": metrics.completion_rate,
         "avg_play_time_seconds": metrics.avg_play_time_seconds,
         "play_count": metrics.play_count,
@@ -369,8 +445,8 @@ def _snapshot_from_row(row: sqlite3.Row) -> VideoSnapshot:
         account_label=row["account_label"],
         video_title=row["video_title"],
         description=row["description"],
-        publish_time=row["publish_time"],
-        captured_at=row["captured_at"],
+        publish_time=parse_datetime_value(row["publish_time"]),
+        captured_at=parse_datetime_value(row["captured_at"]),
         metrics=_metrics_from_row(row),
         source_page=row["source_page"],
     )
@@ -386,11 +462,7 @@ def _video_from_row(row: sqlite3.Row) -> VideoRecord:
         account_label=row["account_label"],
         title=row["title"],
         description=row["description"],
-        publish_time=row["publish_time"],
-        last_captured_at=row["last_captured_at"],
+        publish_time=parse_datetime_value(row["publish_time"]),
+        last_captured_at=parse_datetime_value(row["last_captured_at"]),
         last_metrics=_metrics_from_row(row),
     )
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)

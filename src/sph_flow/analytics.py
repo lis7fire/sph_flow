@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from sph_flow.models import MetricsDelta, VideoMetrics
+from datetime import datetime
+from typing import Any
+
+from sph_flow.models import MetricsDelta, VideoMetrics, normalize_datetime_to_minute, to_epoch_millis
 
 
-def normalize_timestamp_to_minute(timestamp: int) -> int:
-    return (timestamp // 60_000) * 60_000
+def normalize_timestamp_to_minute(timestamp: Any) -> datetime:
+    return normalize_datetime_to_minute(timestamp)
 
 
-def create_snapshot_id(video_id: str, captured_at: int) -> str:
-    return f"{video_id}_{captured_at}"
+def create_snapshot_id(video_id: str, captured_at: Any) -> str:
+    return f"{video_id}_{to_epoch_millis(captured_at)}"
 
 
 def diff_metrics(start: VideoMetrics | None, end: VideoMetrics | None) -> MetricsDelta:

@@ -37,40 +37,44 @@ class MonitorHttpServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
                 parsed = parse.urlparse(self.path)
-                if parsed.path in {"/", "/index.html"}:
-                    self._serve_file(web_dir / "index.html", "text/html; charset=utf-8")
-                    return
-                if parsed.path in {"/app.js", "/styles.css"}:
-                    content_type, _ = mimetypes.guess_type(parsed.path)
-                    self._serve_file(web_dir / parsed.path.lstrip("/"), content_type or "text/plain; charset=utf-8")
-                    return
-                if parsed.path == "/api/bootstrap":
-                    self._write_json(HTTPStatus.OK, service.get_status_bundle())
-                    return
-                if parsed.path == "/api/window-stats":
-                    query = parse.parse_qs(parsed.query)
-                    window_minutes = int((query.get("windowMinutes") or ["5"])[0] or 5)
-                    self._write_json(HTTPStatus.OK, service.list_window_stats(window_minutes))
-                    return
-                if parsed.path == "/api/trend":
-                    query = parse.parse_qs(parsed.query)
-                    video_id = (query.get("videoId") or [""])[0]
-                    metric = (query.get("metric") or ["playCount"])[0]
-                    self._write_json(HTTPStatus.OK, service.build_trend_points(video_id, metric))
-                    return
-                if parsed.path == "/api/export.xlsx":
-                    payload = service.export_snapshots_xlsx()
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header(
-                        "Content-Type",
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-                    self.send_header("Content-Disposition", 'attachment; filename="video-stats.xlsx"')
-                    self.send_header("Content-Length", str(len(payload)))
-                    self.end_headers()
-                    self.wfile.write(payload)
-                    return
-                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+                try:
+                    if parsed.path in {"/", "/index.html"}:
+                        self._serve_file(web_dir / "index.html", "text/html; charset=utf-8")
+                        return
+                    if parsed.path in {"/app.js", "/styles.css"}:
+                        content_type, _ = mimetypes.guess_type(parsed.path)
+                        self._serve_file(web_dir / parsed.path.lstrip("/"), content_type or "text/plain; charset=utf-8")
+                        return
+                    if parsed.path == "/api/bootstrap":
+                        self._write_json(HTTPStatus.OK, service.get_status_bundle())
+                        return
+                    if parsed.path == "/api/window-stats":
+                        query = parse.parse_qs(parsed.query)
+                        window_minutes = int((query.get("windowMinutes") or ["5"])[0] or 5)
+                        self._write_json(HTTPStatus.OK, service.list_window_stats(window_minutes))
+                        return
+                    if parsed.path == "/api/trend":
+                        query = parse.parse_qs(parsed.query)
+                        video_id = (query.get("videoId") or [""])[0]
+                        metric = (query.get("metric") or ["playCount"])[0]
+                        window_minutes = int((query.get("windowMinutes") or ["1"])[0] or 1)
+                        self._write_json(HTTPStatus.OK, service.build_trend_points(video_id, metric, window_minutes))
+                        return
+                    if parsed.path == "/api/export.xlsx":
+                        payload = service.export_snapshots_xlsx()
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header(
+                            "Content-Type",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                        self.send_header("Content-Disposition", 'attachment; filename="video-stats.xlsx"')
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+                except Exception as exc:  # noqa: BLE001
+                    self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
 
             def do_POST(self) -> None:  # noqa: N802
                 parsed = parse.urlparse(self.path)
@@ -125,6 +129,8 @@ class MonitorHttpServer:
                     return
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
+                self.send_header("Cache-Control", "no-store, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
@@ -140,6 +146,8 @@ class MonitorHttpServer:
                 raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)

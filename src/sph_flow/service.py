@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from sph_flow.analytics import diff_metrics
 from sph_flow.collector import CollectorError, WeixinChannelCollector
-from sph_flow.models import CapturePreparationResult, CaptureRunResult, MonitorSettings
+from sph_flow.models import CapturePreparationResult, CaptureRunResult, MonitorSettings, format_datetime_text, now_display_time
 from sph_flow.storage import Storage
 from sph_flow.xlsx_export import build_snapshots_workbook
 
@@ -70,7 +70,7 @@ class MonitorService:
         if not self._capture_lock.acquire(blocking=False):
             raise RuntimeError("后台采集正在进行中，请稍后再试。")
 
-        started_at = _now_ms()
+        started_at = now_display_time()
         settings = self.get_settings()
         selected_video_ids = _normalize_selected_video_ids(settings.selected_video_ids)
         self.storage.save_status(
@@ -107,7 +107,7 @@ class MonitorService:
             self.storage.prune_expired_snapshots(settings.retention_days)
             self.storage.save_status(
                 {
-                    "last_success_at": _now_ms(),
+                    "last_success_at": now_display_time(),
                     "last_error": None,
                     "last_message": result.message,
                     "account_label": account_label,
@@ -133,22 +133,31 @@ class MonitorService:
         rows = self.storage.list_window_stats(window_minutes)
         return {"rows": [row.to_dict(camel=True) for row in rows]}
 
-    def build_trend_points(self, video_id: str, metric: str) -> dict[str, Any]:
+    def build_trend_points(self, video_id: str, metric: str, window_minutes: int = 1) -> dict[str, Any]:
         snapshots = self.storage.get_snapshots_for_video(video_id)
         if not snapshots:
             return {"points": []}
-        first_snapshot = snapshots[0]
+        period = timedelta(minutes=max(1, int(window_minutes or 1)))
         metric_attr = _metric_name_to_attr(metric)
         points = []
+        previous_value: int | float | None = None
+        previous_captured_at = None
         for snapshot in snapshots:
-            delta = diff_metrics(first_snapshot.metrics, snapshot.metrics)
+            if snapshot.captured_at is None:
+                continue
+            if previous_captured_at is not None and snapshot.captured_at < previous_captured_at + period:
+                continue
+            value = getattr(snapshot.metrics, metric_attr, 0)
+            growth = 0 if previous_value is None else value - previous_value
             points.append(
                 {
-                    "timestamp": snapshot.captured_at,
-                    "startTimestamp": first_snapshot.captured_at,
-                    "value": getattr(delta, metric_attr, 0),
+                    "capturedAt": format_datetime_text(snapshot.captured_at),
+                    "value": value,
+                    "growth": growth,
                 }
             )
+            previous_value = value
+            previous_captured_at = snapshot.captured_at
         return {"points": points}
 
     def export_snapshots_xlsx(self) -> bytes:
