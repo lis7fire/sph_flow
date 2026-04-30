@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +10,8 @@ from typing import Any
 from urllib import parse
 
 from sph_flow.service import CaptureScheduler, MonitorService
+
+logger = logging.getLogger(__name__)
 
 
 class MonitorHttpServer:
@@ -20,6 +23,7 @@ class MonitorHttpServer:
     def serve_forever(self) -> None:
         settings = self.service.get_settings()
         server = ThreadingHTTPServer((settings.listen_host, settings.listen_port), self._build_handler())
+        logger.info("HTTP 服务启动 url=http://%s:%s", settings.listen_host, settings.listen_port)
         print(f"视频号流速监控系统已启动：http://{settings.listen_host}:{settings.listen_port}")
         try:
             server.serve_forever()
@@ -28,6 +32,7 @@ class MonitorHttpServer:
         finally:
             server.server_close()
             self.scheduler.stop()
+            logger.info("HTTP 服务已停止")
 
     def _build_handler(self) -> type[BaseHTTPRequestHandler]:
         service = self.service
@@ -74,14 +79,16 @@ class MonitorHttpServer:
                         return
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
                 except Exception as exc:  # noqa: BLE001
+                    logger.exception("GET 请求处理失败 path=%s error=%s", parsed.path, exc)
                     self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
 
             def do_POST(self) -> None:  # noqa: N802
                 parsed = parse.urlparse(self.path)
                 payload = self._read_json()
+                logger.info("POST 请求开始 path=%s payload_keys=%s", parsed.path, sorted(payload))
                 try:
                     if parsed.path == "/api/settings":
-                        settings = service.save_settings(
+                        settings, warnings, account_name_required_keys = service.save_settings_with_account_resolution(
                             {
                                 "poll_interval_minutes": payload.get("pollIntervalMinutes"),
                                 "default_compare_window_minutes": payload.get("defaultCompareWindowMinutes"),
@@ -94,7 +101,45 @@ class MonitorHttpServer:
                             }
                         )
                         scheduler.wake()
+                        self._write_json(
+                            HTTPStatus.OK,
+                            {
+                                "ok": True,
+                                "settings": settings.to_dict(camel=True),
+                                "accountResolveWarnings": warnings,
+                                "accountNameRequiredKeys": account_name_required_keys,
+                            },
+                        )
+                        return
+                    if parsed.path == "/api/settings/basic":
+                        settings = service.save_settings(
+                            {
+                                "poll_interval_minutes": payload.get("pollIntervalMinutes"),
+                                "default_compare_window_minutes": payload.get("defaultCompareWindowMinutes"),
+                                "retention_days": payload.get("retentionDays"),
+                                "target_url": payload.get("targetUrl"),
+                                "request_timeout_seconds": payload.get("requestTimeoutSeconds"),
+                            }
+                        )
+                        scheduler.wake()
                         self._write_json(HTTPStatus.OK, {"ok": True, "settings": settings.to_dict(camel=True)})
+                        return
+                    if parsed.path == "/api/accounts/resolve":
+                        result = service.resolve_account(payload.get("account") or payload)
+                        self._write_json(HTTPStatus.OK, {"ok": True, **result})
+                        return
+                    if parsed.path == "/api/accounts/save":
+                        settings, account, warnings = service.save_account(payload.get("account") or payload)
+                        scheduler.wake()
+                        self._write_json(
+                            HTTPStatus.OK,
+                            {
+                                "ok": True,
+                                "settings": settings.to_dict(camel=True),
+                                "account": account.to_dict(camel=True),
+                                "accountResolveWarnings": warnings,
+                            },
+                        )
                         return
                     if parsed.path == "/api/capture/prepare":
                         preview = service.prepare_capture_accounts(payload.get("accountKeys") or None)
@@ -118,11 +163,17 @@ class MonitorHttpServer:
                         scheduler.wake()
                         self._write_json(HTTPStatus.OK, {"ok": True, "settings": settings.to_dict(camel=True)})
                         return
+                    if parsed.path == "/api/accounts/delete":
+                        settings = service.delete_account(str(payload.get("accountKey") or ""))
+                        scheduler.wake()
+                        self._write_json(HTTPStatus.OK, {"ok": True, "settings": settings.to_dict(camel=True)})
+                        return
                     if parsed.path == "/api/capture/run":
                         result = service.run_capture()
                         self._write_json(HTTPStatus.OK, {"ok": True, "result": result.to_dict(camel=True)})
                         return
                 except Exception as exc:  # noqa: BLE001
+                    logger.exception("POST 请求处理失败 path=%s error=%s", parsed.path, exc)
                     self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
                     return
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})

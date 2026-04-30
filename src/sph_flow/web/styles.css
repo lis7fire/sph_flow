@@ -129,12 +129,15 @@ a {
   backdrop-filter: blur(4px);
 }
 
+.notice[hidden],
 .modal-backdrop[hidden],
-.selection-panel[hidden] {
+.selection-panel[hidden],
+.account-panel[hidden] {
   display: none;
 }
 
-.selection-panel {
+.selection-panel,
+.account-panel {
   position: fixed;
   top: 50%;
   left: 50%;
@@ -146,6 +149,11 @@ a {
   transform: translate(-50%, -50%);
   overflow: hidden;
   box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+}
+
+.account-panel {
+  width: min(760px, calc(100vw - 48px));
+  grid-template-rows: auto minmax(220px, 1fr) auto;
 }
 
 .selection-panel .panel-title-row {
@@ -316,6 +324,18 @@ textarea {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
+.account-editor.manual-name-required {
+  border-color: rgba(154, 52, 18, 0.62);
+  background:
+    linear-gradient(180deg, rgba(255, 247, 237, 0.98), rgba(255, 237, 213, 0.88)),
+    var(--danger-bg);
+}
+
+.account-editor.manual-name-required input[data-field="accountLabelHint"] {
+  border-color: rgba(154, 52, 18, 0.72);
+  background: #fffaf7;
+}
+
 .selection-account-head {
   display: flex;
   justify-content: space-between;
@@ -411,6 +431,11 @@ textarea {
 
 .account-editor textarea {
   min-height: 92px;
+}
+
+.account-modal-body {
+  overflow: auto;
+  padding-right: 4px;
 }
 
 button,

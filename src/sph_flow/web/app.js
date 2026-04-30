@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   settings: null,
   status: null,
   accountStatuses: [],
@@ -11,6 +11,8 @@ const state = {
   isCapturing: false,
   hasInitializedChartWindow: false,
   dashboardRefreshTimer: null,
+  settingsSaveTimer: null,
+  accountDialog: null,
 };
 
 const metricLabels = {
@@ -54,6 +56,16 @@ const el = {
   summaryMeta: document.getElementById("summary-meta"),
   summaryBody: document.getElementById("summary-body"),
   chartList: document.getElementById("chart-list"),
+  accountBackdrop: document.getElementById("account-backdrop"),
+  accountPanel: document.getElementById("account-panel"),
+  accountPanelTitle: document.getElementById("account-panel-title"),
+  accountPanelStatus: document.getElementById("account-panel-status"),
+  accountCookie: document.getElementById("account-cookie"),
+  accountName: document.getElementById("account-name"),
+  accountId: document.getElementById("account-id"),
+  resolveAccount: document.getElementById("resolve-account"),
+  saveAccount: document.getElementById("save-account"),
+  cancelAccount: document.getElementById("cancel-account"),
 };
 
 function formatTimestamp(value) {
@@ -151,6 +163,12 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function setLastError(message = "") {
+  const text = String(message || "").trim();
+  el.lastError.textContent = text;
+  el.lastError.hidden = !text;
+}
+
 async function apiGet(path) {
   const response = await fetch(path);
   const payload = await response.json();
@@ -195,17 +213,7 @@ function getSettingsAccounts(settings) {
       },
     ];
   }
-  return [
-    {
-      key: createAccountKey(),
-      accountId: "",
-      accountLabel: "",
-      sessionCookie: "",
-      accountLabelHint: "",
-      selectedVideoIds: [],
-      captureEnabled: true,
-    },
-  ];
+  return [];
 }
 
 function getAccountStatus(account) {
@@ -254,12 +262,11 @@ function createAccountEditor(account = {}, index = 0) {
   const lastCapturedAt = status?.lastCapturedAt || "未记录";
   const captureEnabled = account.captureEnabled !== false;
   const disabled = state.isCapturing ? "disabled" : "";
-  const detailOpen = account.sessionCookie ? "" : "open";
   const displayName = getAccountDisplayName(account, status, index);
   wrapper.innerHTML = `
     <div class="account-editor-head">
       <div class="account-editor-identity">
-        <div class="account-editor-title">${escapeHtml(displayName)}</div>
+        <div class="account-editor-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
         <div class="account-status-pill">${escapeHtml(statusText)}</div>
       </div>
       <div class="account-status-grid">
@@ -270,30 +277,35 @@ function createAccountEditor(account = {}, index = 0) {
       <div class="account-actions">
         <button type="button" class="${selectedCount && captureEnabled ? "secondary" : "primary"} account-capture-action" ${disabled}>${escapeHtml(actionLabel)}</button>
         ${selectedCount ? `<button type="button" class="ghost account-select-videos" ${disabled}>重新选择</button>` : ""}
+        <button type="button" class="ghost account-edit" ${disabled}>编辑</button>
         <button type="button" class="ghost account-remove" ${disabled}>删除</button>
       </div>
     </div>
-    <details class="account-detail" ${detailOpen}>
-      <summary>账号资料与 Cookie</summary>
-      <div class="account-editor-grid">
-        <label>
-          <span>账号名称补充</span>
-          <input data-field="accountLabelHint" type="text" value="${escapeHtml(account.accountLabelHint || account.accountLabel || "")}" placeholder="接口拿不到昵称时可手动填写" />
-        </label>
-        <label>
-          <span>账号 ID（可选）</span>
-          <input data-field="accountId" type="text" value="${escapeHtml(account.accountId || "")}" placeholder="同一 Cookie 多账号时可填写 finder id" />
-        </label>
-      </div>
-      <label>
-        <span>视频号后台 Cookie</span>
-        <textarea data-field="sessionCookie" rows="4" placeholder="从这个账号的视频号后台请求头里复制完整 Cookie">${escapeHtml(account.sessionCookie || "")}</textarea>
-      </label>
-    </details>
   `;
-  wrapper.querySelector(".account-remove").addEventListener("click", () => {
-    wrapper.remove();
-    renumberAccountEditors();
+  wrapper.querySelector(".account-edit").addEventListener("click", () => {
+    openAccountPanel(account);
+  });
+  wrapper.querySelector(".account-remove").addEventListener("click", async () => {
+    const accountKey = wrapper.dataset.accountKey;
+    if (!getSavedAccount(accountKey)) {
+      wrapper.remove();
+      renumberAccountEditors();
+      return;
+    }
+    if (state.isCapturing) {
+      return;
+    }
+    const removeButton = wrapper.querySelector(".account-remove");
+    removeButton.disabled = true;
+    try {
+      await apiPost("/api/accounts/delete", { accountKey });
+      el.saveStatus.textContent = "账号已删除。";
+      setLastError();
+      await refreshAll();
+    } catch (error) {
+      removeButton.disabled = false;
+      setLastError(error.message);
+    }
   });
   wrapper.querySelector(".account-capture-action").addEventListener("click", async () => {
     await handleAccountCaptureAction(wrapper.dataset.accountKey, account, status);
@@ -309,16 +321,206 @@ function renumberAccountEditors() {
     const title = editor.querySelector(".account-editor-title");
     const existingAccount = (state.settings?.accounts || []).find((item) => item.key === editor.dataset.accountKey);
     if (title) {
-      title.textContent = getAccountDisplayName(existingAccount || {}, getAccountStatus(existingAccount || {}), index);
+      const displayName = getAccountDisplayName(existingAccount || {}, getAccountStatus(existingAccount || {}), index);
+      title.textContent = displayName;
+      title.title = displayName;
     }
   });
 }
 
 function renderAccountEditors(accounts) {
   el.accountsList.innerHTML = "";
+  if (!accounts.length) {
+    el.accountsList.innerHTML = '<div class="empty">暂无账号</div>';
+    return;
+  }
   accounts.forEach((account, index) => {
     el.accountsList.appendChild(createAccountEditor(account, index));
   });
+}
+
+function setModalOpen() {
+  const hasOpenModal = !el.selectionPanel.hidden || !el.accountPanel.hidden;
+  document.body.classList.toggle("modal-open", hasOpenModal);
+}
+
+function getBasicSettingsPayload() {
+  return {
+    pollIntervalMinutes: Number(el.pollInterval.value || 1),
+    defaultCompareWindowMinutes: Number(el.compareWindow.value || 5),
+    retentionDays: Number(el.retentionDays.value || 30),
+    targetUrl: el.targetUrl.value,
+    requestTimeoutSeconds: Number(el.requestTimeout.value || 20),
+  };
+}
+
+async function saveBasicSettings({ quiet = false } = {}) {
+  const response = await apiPost("/api/settings/basic", getBasicSettingsPayload());
+  state.settings = response.settings;
+  if (!quiet) {
+    el.saveStatus.textContent = `采集设置已保存：${new Date().toLocaleString()}`;
+  }
+  return response;
+}
+
+function scheduleSettingsSave() {
+  if (state.settingsSaveTimer) {
+    clearTimeout(state.settingsSaveTimer);
+  }
+  el.saveStatus.textContent = "采集设置待保存...";
+  state.settingsSaveTimer = setTimeout(() => {
+    state.settingsSaveTimer = null;
+    saveBasicSettings().catch((error) => {
+      el.saveStatus.textContent = error.message;
+    });
+  }, 600);
+}
+
+function openAccountPanel(account = null) {
+  state.accountDialog = {
+    key: account?.key || createAccountKey(),
+    selectedVideoIds: account?.selectedVideoIds || [],
+    captureEnabled: account?.captureEnabled ?? true,
+  };
+  el.accountPanelTitle.textContent = account ? "编辑账号" : "添加账号";
+  el.accountPanelStatus.textContent = "填写 Cookie 后读取账号名。";
+  el.accountCookie.value = account?.sessionCookie || "";
+  el.accountName.value = account?.accountLabelHint || account?.accountLabel || "";
+  el.accountId.value = account?.accountId || "";
+  el.accountBackdrop.hidden = false;
+  el.accountPanel.hidden = false;
+  setModalOpen();
+  setTimeout(() => el.accountCookie.focus(), 0);
+}
+
+function closeAccountPanel() {
+  state.accountDialog = null;
+  el.accountBackdrop.hidden = true;
+  el.accountPanel.hidden = true;
+  el.accountCookie.value = "";
+  el.accountName.value = "";
+  el.accountId.value = "";
+  el.accountPanelStatus.textContent = "";
+  setModalOpen();
+}
+
+function readAccountPanelAccount() {
+  const existing = getSavedAccount(state.accountDialog?.key);
+  return {
+    key: state.accountDialog?.key || createAccountKey(),
+    accountId: el.accountId.value.trim(),
+    accountLabel: el.accountName.value.trim(),
+    accountLabelHint: el.accountName.value.trim(),
+    sessionCookie: el.accountCookie.value.trim(),
+    selectedVideoIds: state.accountDialog?.selectedVideoIds || existing?.selectedVideoIds || [],
+    captureEnabled: state.accountDialog?.captureEnabled ?? existing?.captureEnabled ?? true,
+  };
+}
+
+function setAccountPanelBusy(isBusy) {
+  el.resolveAccount.disabled = isBusy;
+  el.saveAccount.disabled = isBusy;
+  el.cancelAccount.disabled = isBusy;
+}
+
+async function resolveAccountFromPanel() {
+  const account = readAccountPanelAccount();
+  if (!account.sessionCookie) {
+    el.accountPanelStatus.textContent = "请先填写账号 Cookie。";
+    el.accountCookie.focus();
+    return null;
+  }
+  setAccountPanelBusy(true);
+  el.accountPanelStatus.textContent = "正在获取账号名...";
+  try {
+    const response = await apiPost("/api/accounts/resolve", { account });
+    const resolvedAccount = response.account || {};
+    if (resolvedAccount.accountLabel) {
+      el.accountName.value = resolvedAccount.accountLabel;
+    }
+    if (resolvedAccount.accountId) {
+      el.accountId.value = resolvedAccount.accountId;
+    }
+    el.accountPanelStatus.textContent = response.message || "账号名已同步。";
+    if (!response.resolved) {
+      el.accountName.focus();
+    }
+    return response;
+  } catch (error) {
+    el.accountPanelStatus.textContent = error.message;
+    el.accountName.focus();
+    return null;
+  } finally {
+    setAccountPanelBusy(false);
+  }
+}
+
+async function saveAccountFromPanel() {
+  let account = readAccountPanelAccount();
+  if (!account.sessionCookie) {
+    el.accountPanelStatus.textContent = "请先填写账号 Cookie。";
+    el.accountCookie.focus();
+    return;
+  }
+  if (!account.accountLabel) {
+    const resolved = await resolveAccountFromPanel();
+    account = readAccountPanelAccount();
+    if (!resolved?.resolved && !account.accountLabel) {
+      el.accountPanelStatus.textContent = resolved?.message || "请填写账号名称后再保存。";
+      el.accountName.focus();
+      return;
+    }
+  }
+  setAccountPanelBusy(true);
+  el.accountPanelStatus.textContent = "正在保存账号...";
+  try {
+    const response = await apiPost("/api/accounts/save", { account });
+    state.settings = response.settings;
+    closeAccountPanel();
+    el.saveStatus.textContent = response.accountResolveWarnings?.length
+      ? `账号已保存：${response.accountResolveWarnings.join("；")}`
+      : "账号已保存。";
+    setLastError();
+    await refreshAll();
+  } catch (error) {
+    el.accountPanelStatus.textContent = error.message;
+    el.accountName.focus();
+  } finally {
+    setAccountPanelBusy(false);
+  }
+}
+
+function clearManualNameHints() {
+  el.accountsList.querySelectorAll(".account-editor.manual-name-required").forEach((editor) => {
+    editor.classList.remove("manual-name-required");
+    const input = editor.querySelector('input[data-field="accountLabelHint"]');
+    if (input) {
+      input.required = false;
+    }
+  });
+}
+
+function requestManualAccountNames(accountKeys = []) {
+  clearManualNameHints();
+  const keys = new Set(accountKeys);
+  let firstInput = null;
+  el.accountsList.querySelectorAll(".account-editor").forEach((editor) => {
+    if (!keys.has(editor.dataset.accountKey)) {
+      return;
+    }
+    editor.classList.add("manual-name-required");
+    const detail = editor.querySelector(".account-detail");
+    const input = editor.querySelector('input[data-field="accountLabelHint"]');
+    if (detail) {
+      detail.open = true;
+    }
+    if (input) {
+      input.required = true;
+      input.placeholder = "请填写账号名称";
+      firstInput ||= input;
+    }
+  });
+  firstInput?.focus();
 }
 
 function addAccountEditor(account = {}) {
@@ -332,7 +534,7 @@ async function handleAccountCaptureAction(accountKey, account, status) {
   }
   const savedAccount = getSavedAccount(accountKey);
   if (!savedAccount) {
-    el.lastError.textContent = "请先保存账号配置，再选择视频或控制采集。";
+    setLastError("请先保存账号配置，再选择视频或控制采集。");
     return;
   }
   const selectedCount = getAccountSelectedCount(account, status);
@@ -349,7 +551,7 @@ async function handleAccountCaptureAction(accountKey, account, status) {
     });
     await refreshAll();
   } catch (error) {
-    el.lastError.textContent = error.message;
+    setLastError(error.message);
   } finally {
     state.isCapturing = false;
     renderAccountEditors(getSettingsAccounts(state.settings));
@@ -364,7 +566,7 @@ function collectAccountSettings() {
       return {
         key: editor.dataset.accountKey || createAccountKey(),
         accountId: field("accountId"),
-        accountLabel: field("accountLabelHint") || existingAccount?.accountLabel || "",
+        accountLabel: existingAccount?.accountLabel || "",
         accountLabelHint: field("accountLabelHint"),
         sessionCookie: field("sessionCookie"),
         selectedVideoIds: existingAccount?.selectedVideoIds || [],
@@ -417,7 +619,7 @@ function hideSelectionPanel() {
   state.selectedVideoIdsByAccount = new Map();
   el.selectionPanel.hidden = true;
   el.selectionBackdrop.hidden = true;
-  document.body.classList.remove("modal-open");
+  setModalOpen();
   el.videoSelectionList.innerHTML = '<div class="empty">等待读取近期视频...</div>';
   el.selectionStatus.textContent = "先读取近期视频，再选择本次要采集的内容。";
 }
@@ -490,8 +692,7 @@ function renderSelectionList() {
         <div class="selection-account-group">
           <div class="selection-account-head">
             <div>
-              <div class="selection-account-title">${escapeHtml(preview.accountLabel || preview.accountKey || "未知账号")}</div>
-              <div class="video-option-meta">${escapeHtml(preview.message || "")}</div>
+              <div class="selection-account-title" title="${escapeHtml(preview.accountLabel || preview.accountKey || "未知账号")}">${escapeHtml(preview.accountLabel || preview.accountKey || "未知账号")}</div>
             </div>
             <span class="badge">${preview.ok ? `${preview.videos.length} 条视频` : "读取失败"}</span>
           </div>
@@ -529,7 +730,7 @@ function showSelectionPanel(previewPayload) {
   });
   el.selectionPanel.hidden = false;
   el.selectionBackdrop.hidden = false;
-  document.body.classList.add("modal-open");
+  setModalOpen();
   el.selectionAccount.textContent = `${previewPayload.previews?.length || 0} 个账号`;
   el.selectionStatus.textContent = "已按账号读取近期视频，请勾选本次要采集的内容。";
   renderSelectionList();
@@ -905,7 +1106,7 @@ function scheduleDashboardRefresh() {
   state.dashboardRefreshTimer = setTimeout(() => {
     state.dashboardRefreshTimer = null;
     refreshDashboard().catch((error) => {
-      el.lastError.textContent = error.message;
+      setLastError(error.message);
     });
   }, 300);
 }
@@ -922,7 +1123,7 @@ async function refreshBootstrap() {
   state.accountStatuses = payload.accountStatuses || [];
   state.recentSnapshots = payload.recentSnapshots || [];
   state.hasCaptureHistory = Boolean(payload.hasCaptureHistory);
-  el.lastError.textContent = state.status?.lastError || "无";
+  setLastError(state.status?.lastError);
   if (shouldSyncForm) {
     renderSettings();
   }
@@ -936,19 +1137,19 @@ async function refreshAll() {
 
 async function beginCaptureSetup(accountKey = null) {
   if (accountKey && !getSavedAccount(accountKey)) {
-    el.lastError.textContent = "请先保存账号配置，再选择视频。";
+    setLastError("请先保存账号配置，再选择视频。");
     return;
   }
   state.isCapturing = true;
   renderAccountEditors(getSettingsAccounts(state.settings));
-  el.lastError.textContent = "正在读取账号和近期视频...";
+  setLastError("正在读取账号和近期视频...");
   try {
     const body = accountKey ? { accountKeys: [accountKey] } : {};
     const response = await apiPost("/api/capture/prepare", body);
     showSelectionPanel(response);
-    el.lastError.textContent = "无";
+    setLastError();
   } catch (error) {
-    el.lastError.textContent = error.message;
+    setLastError(error.message);
     hideSelectionPanel();
   } finally {
     state.isCapturing = false;
@@ -962,30 +1163,30 @@ el.refreshAllButton.addEventListener("click", async () => {
 });
 
 el.addAccountButton.addEventListener("click", () => {
-  addAccountEditor();
+  openAccountPanel();
 });
 
 el.settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  try {
-    const accounts = collectAccountSettings();
-    if (!accounts.length) {
-      throw new Error("请至少添加一个账号 Cookie。");
-    }
-    await apiPost("/api/settings", {
-      pollIntervalMinutes: Number(el.pollInterval.value || 1),
-      defaultCompareWindowMinutes: Number(el.compareWindow.value || 5),
-      retentionDays: Number(el.retentionDays.value || 30),
-      targetUrl: el.targetUrl.value,
-      accounts,
-      requestTimeoutSeconds: Number(el.requestTimeout.value || 20),
-    });
-    el.saveStatus.textContent = `保存成功：${new Date().toLocaleString()}`;
-    await refreshAll();
-  } catch (error) {
-    el.saveStatus.textContent = error.message;
-  }
 });
+
+[el.pollInterval, el.compareWindow, el.retentionDays, el.targetUrl, el.requestTimeout].forEach((input) => {
+  input.addEventListener("input", scheduleSettingsSave);
+  input.addEventListener("change", () => {
+    if (state.settingsSaveTimer) {
+      clearTimeout(state.settingsSaveTimer);
+      state.settingsSaveTimer = null;
+    }
+    saveBasicSettings().catch((error) => {
+      el.saveStatus.textContent = error.message;
+    });
+  });
+});
+
+el.resolveAccount.addEventListener("click", resolveAccountFromPanel);
+el.saveAccount.addEventListener("click", saveAccountFromPanel);
+el.cancelAccount.addEventListener("click", closeAccountPanel);
+el.accountBackdrop.addEventListener("click", closeAccountPanel);
 
 el.selectAllVideos.addEventListener("change", () => {
   if (!state.currentPreview) {
@@ -1019,7 +1220,7 @@ el.confirmSelection.addEventListener("click", async () => {
     await refreshAll();
   } catch (error) {
     el.selectionStatus.textContent = error.message;
-    el.lastError.textContent = error.message;
+    setLastError(error.message);
   } finally {
     state.isCapturing = false;
     renderAccountEditors(getSettingsAccounts(state.settings));
@@ -1043,6 +1244,10 @@ el.selectionBackdrop.addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !el.accountPanel.hidden && !el.saveAccount.disabled) {
+    closeAccountPanel();
+    return;
+  }
   if (event.key === "Escape" && !el.selectionPanel.hidden && !state.isCapturing) {
     hideSelectionPanel();
   }
@@ -1056,7 +1261,7 @@ el.videoSelect.addEventListener("change", () => {
 });
 
 refreshAll().catch((error) => {
-  el.lastError.textContent = error.message;
+  setLastError(error.message);
 });
 
 setInterval(() => {

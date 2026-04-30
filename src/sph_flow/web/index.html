@@ -57,13 +57,43 @@
                 </div>
               </div>
               <div id="accounts-list" class="accounts-list"></div>
-              <div class="notice error" id="last-error">无</div>
+              <div class="notice error" id="last-error" hidden></div>
             </div>
             <div class="form-actions">
-              <button type="submit" class="primary">保存设置</button>
               <span id="save-status" class="muted"></span>
             </div>
           </form>
+        </section>
+
+        <div id="account-backdrop" class="modal-backdrop" hidden></div>
+        <section class="panel account-panel" id="account-panel" role="dialog" aria-modal="true" aria-labelledby="account-panel-title" hidden>
+          <div class="panel-title-row">
+            <div>
+              <h2 id="account-panel-title">添加账号</h2>
+              <p id="account-panel-status" class="muted">填写 Cookie 后读取账号名。</p>
+            </div>
+          </div>
+          <div class="account-modal-body">
+            <label>
+              <span>视频号后台 Cookie</span>
+              <textarea id="account-cookie" rows="5" required></textarea>
+            </label>
+            <div class="account-editor-grid">
+              <label>
+                <span>账号名称</span>
+                <input id="account-name" type="text" />
+              </label>
+              <label>
+                <span>账号 ID（可选）</span>
+                <input id="account-id" type="text" />
+              </label>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="resolve-account" type="button" class="secondary">获取账号名</button>
+            <button id="save-account" type="button" class="primary">保存账号</button>
+            <button id="cancel-account" type="button" class="secondary">取消</button>
+          </div>
         </section>
 
         <div id="selection-backdrop" class="modal-backdrop" hidden></div>

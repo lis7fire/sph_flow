@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import socket
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from urllib import parse, request
+from urllib import error as urlerror, parse, request
 
 from sph_flow.models import (
     CapturePreparationResult,
@@ -17,6 +21,8 @@ from sph_flow.models import (
     normalize_video_title_text,
     parse_datetime_value,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -30,19 +36,41 @@ class CollectorError(RuntimeError):
 
 
 class WeixinChannelCollector:
+    def fetch_account_identity(self, settings: MonitorSettings) -> AccountIdentity:
+        query = {
+            "_aid": str(uuid.uuid4()),
+            "_rid": uuid.uuid4().hex[:8],
+            "_pageUrl": _platform_url(settings),
+        }
+        response = self._request_json(
+            settings,
+            f"/cgi-bin/mmfinderassistant-bin/auth/auth_data?{parse.urlencode(query)}",
+            self._create_base_request_body(settings),
+        )
+        finder_user = _find_nested_dict(response, "finderUser") or {}
+        nickname = _first_text(finder_user, "nickname")
+        account_id = _find_nested_text_excluding(response, {"userAttr"}, "finderUsername")
+        if not nickname and not account_id:
+            raise CollectorError("账号信息接口已返回，但没有找到可用的账号名。")
+        logger.info("账号身份读取成功 account=%s account_label=%s account_id=%s", _account_label(settings), nickname or "-", _mask_identifier(account_id))
+        return AccountIdentity(account_id=account_id, account_label=nickname)
+
     def prepare_capture(self, settings: MonitorSettings) -> CapturePreparationResult:
+        logger.info("准备读取近期视频 account=%s", _account_label(settings))
         account = self._read_account_identity(settings)
         videos = self._fetch_all_videos_from_post_list(settings)
         preview_videos = [self._to_captured_video(item, account) for item in videos]
         preview_videos = [video for video in preview_videos if video is not None]
         if not preview_videos:
+            logger.info("官网请求成功但没有发现数据 account=%s raw_count=%s", _account_label(settings), len(videos))
             return CapturePreparationResult(
-                ok=False,
-                message="近期视频列表已读取，但没有找到可采集的视频。",
+                ok=True,
+                message="官网请求成功，没发现数据。",
                 account_id=account.account_id,
                 account_label=account.account_label,
                 videos=[],
             )
+        logger.info("近期视频读取成功 account=%s videos=%s", account.account_label or _account_label(settings), len(preview_videos))
         return CapturePreparationResult(
             ok=True,
             message=f"成功读取 {len(preview_videos)} 条近期视频。",
@@ -52,11 +80,18 @@ class WeixinChannelCollector:
         )
 
     def capture(self, settings: MonitorSettings, selected_video_ids: list[str]) -> CaptureRunResult:
+        logger.info("开始采集账号 account=%s selected_videos=%s", _account_label(settings), len(selected_video_ids))
         account = self._read_account_identity(settings)
         videos = self._fetch_all_videos_from_post_list(settings)
         selected = {item.strip() for item in selected_video_ids if item and item.strip()}
         target_items = [item for item in videos if item.object_id and (not selected or item.object_id in selected)]
         if not target_items:
+            logger.warning(
+                "已读取视频列表但未匹配到已选视频 account=%s selected=%s available=%s",
+                account.account_label or _account_label(settings),
+                len(selected),
+                len(videos),
+            )
             return CaptureRunResult(
                 ok=False,
                 message="未匹配到这次要采集的视频，请重新刷新视频列表后再选择。",
@@ -67,6 +102,12 @@ class WeixinChannelCollector:
 
         captured: list[CapturedVideo] = []
         for item in target_items:
+            logger.info(
+                "开始读取视频明细 account=%s feed_id=%s title=%s",
+                account.account_label or _account_label(settings),
+                item.object_id,
+                item.title,
+            )
             detail_metrics = self._fetch_detail_metrics(settings, item.object_id or "")
             captured.append(
                 CapturedVideo(
@@ -83,6 +124,7 @@ class WeixinChannelCollector:
                 )
             )
 
+        logger.info("账号采集完成 account=%s captured=%s", account.account_label or _account_label(settings), len(captured))
         return CaptureRunResult(
             ok=True,
             message=f"成功采集 {len(captured)} 条视频数据。",
@@ -91,13 +133,24 @@ class WeixinChannelCollector:
             videos=captured,
         )
 
-    def _request_json(self, settings: MonitorSettings, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    def _request_json(
+        self,
+        settings: MonitorSettings,
+        path: str,
+        body: dict[str, Any],
+        *,
+        allow_business_error: bool = False,
+    ) -> dict[str, Any]:
         if not settings.session_cookie.strip():
+            logger.warning("微信请求被跳过：Cookie 为空 path=%s account=%s", path, _account_label(settings))
             raise CollectorError("请先在设置里填写视频号后台请求的 Cookie，再开始采集。")
 
         parsed = parse.urlparse(settings.target_url.rstrip("/"))
         endpoint = f"{parsed.scheme}://{parsed.netloc}{path}"
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        timeout_seconds = max(5, settings.request_timeout_seconds)
+        request_id = uuid.uuid4().hex[:8]
+        started_at = time.perf_counter()
         headers = {
             "content-type": "application/json",
             "cookie": settings.session_cookie.strip(),
@@ -109,20 +162,231 @@ class WeixinChannelCollector:
             ),
         }
         req = request.Request(endpoint, data=payload, headers=headers, method="POST")
+        logger.info(
+            "微信请求开始 request_id=%s path=%s account=%s account_id=%s timeout=%ss cookie=%s body=%s",
+            request_id,
+            path,
+            _account_label(settings),
+            _mask_identifier(settings.selected_account_id),
+            timeout_seconds,
+            _cookie_summary(settings.session_cookie),
+            _body_summary(body),
+        )
         try:
-            with request.urlopen(req, timeout=max(5, settings.request_timeout_seconds)) as response:
-                raw = response.read().decode("utf-8")
+            with _urlopen_direct(req, timeout_seconds) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+                http_status = getattr(response, "status", None)
+        except urlerror.HTTPError as exc:
+            raw_error = _read_http_error_body(exc)
+            elapsed_ms = _elapsed_ms(started_at)
+            hint = _http_error_hint(exc.code, raw_error)
+            logger.error(
+                "微信请求 HTTP 错误 request_id=%s path=%s status=%s reason=%s elapsed_ms=%s hint=%s body=%s",
+                request_id,
+                path,
+                exc.code,
+                exc.reason,
+                elapsed_ms,
+                hint or "-",
+                _preview_text(raw_error),
+            )
+            raise CollectorError(f"接口请求失败：{path}，HTTP {exc.code}{_format_hint(hint)}") from exc
+        except urlerror.URLError as exc:
+            elapsed_ms = _elapsed_ms(started_at)
+            reason = getattr(exc, "reason", exc)
+            if _is_timeout_error(reason):
+                logger.error(
+                    "微信请求超时 request_id=%s path=%s timeout=%ss elapsed_ms=%s reason=%s",
+                    request_id,
+                    path,
+                    timeout_seconds,
+                    elapsed_ms,
+                    reason,
+                )
+                raise CollectorError(f"接口请求超时：{path}，已等待 {timeout_seconds} 秒，请检查网络或调大请求超时。") from exc
+            logger.error(
+                "微信请求网络错误 request_id=%s path=%s elapsed_ms=%s reason=%s",
+                request_id,
+                path,
+                elapsed_ms,
+                reason,
+            )
+            raise CollectorError(f"接口请求失败：{path}，网络错误：{reason}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            elapsed_ms = _elapsed_ms(started_at)
+            logger.error(
+                "微信请求超时 request_id=%s path=%s timeout=%ss elapsed_ms=%s",
+                request_id,
+                path,
+                timeout_seconds,
+                elapsed_ms,
+            )
+            raise CollectorError(f"接口请求超时：{path}，已等待 {timeout_seconds} 秒，请检查网络或调大请求超时。") from exc
         except Exception as exc:  # noqa: BLE001
+            elapsed_ms = _elapsed_ms(started_at)
+            logger.exception("微信请求异常 request_id=%s path=%s elapsed_ms=%s", request_id, path, elapsed_ms)
             raise CollectorError(f"接口请求失败：{path}，{exc}") from exc
 
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise CollectorError(f"接口返回不是合法 JSON：{path}") from exc
+            logger.error(
+                "微信请求返回非 JSON request_id=%s path=%s status=%s elapsed_ms=%s body=%s",
+                request_id,
+                path,
+                http_status,
+                _elapsed_ms(started_at),
+                _preview_text(raw),
+            )
+            raise CollectorError(f"接口返回不是合法 JSON：{path}，可能是登录态失效或微信后台返回了 HTML。") from exc
 
         err_code = data.get("errCode")
-        if isinstance(err_code, int) and err_code != 0:
-            raise CollectorError(f"{path} 返回错误：{data.get('errMsg') or err_code}")
+        err_msg = data.get("errMsg")
+        if err_code not in (None, 0, "0"):
+            hint = _business_error_hint(err_code, err_msg)
+            log = logger.info if allow_business_error else logger.warning
+            log(
+                "微信请求业务状态 request_id=%s path=%s status=%s err_code=%s err_msg=%s elapsed_ms=%s hint=%s allowed=%s",
+                request_id,
+                path,
+                http_status,
+                err_code,
+                err_msg,
+                _elapsed_ms(started_at),
+                hint or "-",
+                allow_business_error,
+            )
+            if allow_business_error:
+                return data
+            raise CollectorError(_format_business_error_message(path, err_code, err_msg, hint))
+        logger.info(
+            "微信请求成功 request_id=%s path=%s status=%s err_code=%s elapsed_ms=%s bytes=%s",
+            request_id,
+            path,
+            http_status,
+            err_code,
+            _elapsed_ms(started_at),
+            len(raw),
+        )
+        return data
+
+    def _request_json_get(self, settings: MonitorSettings, path: str, query: dict[str, Any]) -> dict[str, Any]:
+        if not settings.session_cookie.strip():
+            logger.warning("微信 GET 请求被跳过：Cookie 为空 path=%s account=%s", path, _account_label(settings))
+            raise CollectorError("请先在设置里填写视频号后台请求的 Cookie，再开始采集。")
+
+        parsed = parse.urlparse(settings.target_url.rstrip("/"))
+        endpoint = f"{parsed.scheme}://{parsed.netloc}{path}?{parse.urlencode(query)}"
+        timeout_seconds = max(5, settings.request_timeout_seconds)
+        request_id = uuid.uuid4().hex[:8]
+        started_at = time.perf_counter()
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "cookie": settings.session_cookie.strip(),
+            "referer": _platform_url(settings),
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+            ),
+        }
+        req = request.Request(endpoint, headers=headers, method="GET")
+        logger.info(
+            "微信 GET 请求开始 request_id=%s path=%s account=%s timeout=%ss cookie=%s query=%s",
+            request_id,
+            path,
+            _account_label(settings),
+            timeout_seconds,
+            _cookie_summary(settings.session_cookie),
+            {key: query.get(key) for key in ("_rid", "_pageUrl")},
+        )
+        try:
+            with _urlopen_direct(req, timeout_seconds) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+                http_status = getattr(response, "status", None)
+        except urlerror.HTTPError as exc:
+            raw_error = _read_http_error_body(exc)
+            hint = _http_error_hint(exc.code, raw_error)
+            logger.error(
+                "微信 GET 请求 HTTP 错误 request_id=%s path=%s status=%s reason=%s elapsed_ms=%s hint=%s body=%s",
+                request_id,
+                path,
+                exc.code,
+                exc.reason,
+                _elapsed_ms(started_at),
+                hint or "-",
+                _preview_text(raw_error),
+            )
+            raise CollectorError(f"接口请求失败：{path}，HTTP {exc.code}{_format_hint(hint)}") from exc
+        except urlerror.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            if _is_timeout_error(reason):
+                logger.error(
+                    "微信 GET 请求超时 request_id=%s path=%s timeout=%ss elapsed_ms=%s reason=%s",
+                    request_id,
+                    path,
+                    timeout_seconds,
+                    _elapsed_ms(started_at),
+                    reason,
+                )
+                raise CollectorError(f"接口请求超时：{path}，已等待 {timeout_seconds} 秒，请检查网络或调大请求超时。") from exc
+            logger.error(
+                "微信 GET 请求网络错误 request_id=%s path=%s elapsed_ms=%s reason=%s",
+                request_id,
+                path,
+                _elapsed_ms(started_at),
+                reason,
+            )
+            raise CollectorError(f"接口请求失败：{path}，网络错误：{reason}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            logger.error(
+                "微信 GET 请求超时 request_id=%s path=%s timeout=%ss elapsed_ms=%s",
+                request_id,
+                path,
+                timeout_seconds,
+                _elapsed_ms(started_at),
+            )
+            raise CollectorError(f"接口请求超时：{path}，已等待 {timeout_seconds} 秒，请检查网络或调大请求超时。") from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("微信 GET 请求异常 request_id=%s path=%s elapsed_ms=%s", request_id, path, _elapsed_ms(started_at))
+            raise CollectorError(f"接口请求失败：{path}，{exc}") from exc
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                "微信 GET 请求返回非 JSON request_id=%s path=%s status=%s elapsed_ms=%s body=%s",
+                request_id,
+                path,
+                http_status,
+                _elapsed_ms(started_at),
+                _preview_text(raw),
+            )
+            raise CollectorError(f"接口返回不是合法 JSON：{path}，可能是登录态失效或微信后台返回了 HTML。") from exc
+
+        err_code = data.get("errCode")
+        err_msg = data.get("errMsg")
+        if err_code not in (None, 0, "0"):
+            hint = _business_error_hint(err_code, err_msg)
+            logger.warning(
+                "微信 GET 请求业务错误 request_id=%s path=%s status=%s err_code=%s err_msg=%s elapsed_ms=%s hint=%s",
+                request_id,
+                path,
+                http_status,
+                err_code,
+                err_msg,
+                _elapsed_ms(started_at),
+                hint or "-",
+            )
+            raise CollectorError(_format_business_error_message(path, err_code, err_msg, hint))
+        logger.info(
+            "微信 GET 请求成功 request_id=%s path=%s status=%s err_code=%s elapsed_ms=%s bytes=%s",
+            request_id,
+            path,
+            http_status,
+            err_code,
+            _elapsed_ms(started_at),
+            len(raw),
+        )
         return data
 
     def _read_account_identity(self, settings: MonitorSettings) -> AccountIdentity:
@@ -155,6 +419,13 @@ class WeixinChannelCollector:
         current_page = 1
         total_count = 10**9
         items: list[_PostListItem] = []
+        logger.info(
+            "开始读取视频列表 account=%s start_ts=%s end_ts=%s page_size=%s",
+            _account_label(settings),
+            start_ts,
+            end_ts,
+            page_size,
+        )
         while len(items) < total_count:
             response = self._request_json(
                 settings,
@@ -174,14 +445,23 @@ class WeixinChannelCollector:
             page_items = [self._map_post_list_item(item) for item in raw_list]
             items.extend(page_items)
             total_count = int(data.get("totalCount") or len(page_items))
+            logger.info(
+                "视频列表分页完成 account=%s page=%s page_items=%s total_count=%s accumulated=%s",
+                _account_label(settings),
+                current_page,
+                len(page_items),
+                total_count,
+                len(items),
+            )
             if len(page_items) < page_size:
                 break
             current_page += 1
         if not items:
-            raise CollectorError("post_list 没有返回任何视频数据，请检查 Cookie 是否有效。")
+            logger.info("官网请求成功但视频列表为空 account=%s", _account_label(settings))
         return items
 
     def _fetch_detail_metrics(self, settings: MonitorSettings, feed_id: str) -> VideoMetrics:
+        logger.info("开始读取视频明细指标 account=%s feed_id=%s", _account_label(settings), feed_id)
         response = self._request_json(
             settings,
             "/micro/statistic/cgi-bin/mmfinderassistant-bin/statistic/feed_aggreagate_data_by_tab_type",
@@ -194,6 +474,7 @@ class WeixinChannelCollector:
             },
         )
         feed_data = (((response.get("data") or {}).get("feedData") or [{}])[0].get("dataByTabtype")) or []
+        logger.info("视频明细指标返回 account=%s feed_id=%s tab_count=%s", _account_label(settings), feed_id, len(feed_data))
         totals = {
             "play_count": 0,
             "like_count": 0,
@@ -361,6 +642,211 @@ class WeixinChannelCollector:
             publish_time=item.publish_time,
             metrics=self._create_overview_metrics(item),
         )
+
+
+def _account_label(settings: MonitorSettings) -> str:
+    return settings.selected_account_label or settings.account_label_hint or settings.selected_account_id or "未命名账号"
+
+
+def _platform_url(settings: MonitorSettings) -> str:
+    parsed = parse.urlparse(settings.target_url.rstrip("/"))
+    return f"{parsed.scheme}://{parsed.netloc}/platform"
+
+
+def _first_text(source: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value is not None and not isinstance(value, (dict, list, tuple, set)):
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
+def _find_nested_dict(source: Any, key: str) -> dict[str, Any] | None:
+    if isinstance(source, dict):
+        value = source.get(key)
+        if isinstance(value, dict):
+            return value
+        for child in source.values():
+            found = _find_nested_dict(child, key)
+            if found is not None:
+                return found
+    elif isinstance(source, list):
+        for child in source:
+            found = _find_nested_dict(child, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _find_nested_text(source: Any, *keys: str) -> str | None:
+    if isinstance(source, dict):
+        direct = _first_text(source, *keys)
+        if direct:
+            return direct
+        for child in source.values():
+            found = _find_nested_text(child, *keys)
+            if found:
+                return found
+    elif isinstance(source, list):
+        for child in source:
+            found = _find_nested_text(child, *keys)
+            if found:
+                return found
+    return None
+
+
+def _find_nested_text_excluding(source: Any, excluded_keys: set[str], *keys: str) -> str | None:
+    if isinstance(source, dict):
+        direct = _first_text(source, *keys)
+        if direct:
+            return direct
+        for key, child in source.items():
+            if key in excluded_keys:
+                continue
+            found = _find_nested_text_excluding(child, excluded_keys, *keys)
+            if found:
+                return found
+    elif isinstance(source, list):
+        for child in source:
+            found = _find_nested_text_excluding(child, excluded_keys, *keys)
+            if found:
+                return found
+    return None
+
+
+def _urlopen_direct(req: request.Request, timeout_seconds: int):
+    opener = request.build_opener(request.ProxyHandler({}))
+    return opener.open(req, timeout=timeout_seconds)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _is_timeout_error(error: Any) -> bool:
+    return isinstance(error, (TimeoutError, socket.timeout)) or "timed out" in str(error).lower()
+
+
+def _read_http_error_body(exc: urlerror.HTTPError) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _preview_text(value: Any, limit: int = 500) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def _mask_identifier(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    if len(text) <= 8:
+        return f"{text[:2]}***"
+    return f"{text[:4]}***{text[-4:]}"
+
+
+def _cookie_summary(cookie: str) -> str:
+    text = str(cookie or "").strip()
+    if not text:
+        return "empty"
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+    parts = {}
+    for item in text.split(";"):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parts[key.strip().lower()] = value.strip()
+    wxuin = _mask_identifier(parts.get("wxuin"))
+    has_sessionid = "yes" if parts.get("sessionid") else "no"
+    return f"len={len(text)} sha256={digest} wxuin={wxuin} sessionid={has_sessionid}"
+
+
+def _body_summary(body: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = (
+        "currentPage",
+        "pageSize",
+        "feedId",
+        "startTime",
+        "endTime",
+        "startTs",
+        "endTs",
+        "interval",
+        "sort",
+        "order",
+        "scene",
+        "reqScene",
+    )
+    return {key: body.get(key) for key in allowed_keys if key in body}
+
+
+def _http_error_hint(status_code: int, raw_body: str = "") -> str | None:
+    if status_code in {401, 403}:
+        return "登录态可能失效，请重新复制该账号 Cookie。"
+    if status_code == 429:
+        return "请求过于频繁，建议降低采集频率或稍后重试。"
+    if status_code >= 500:
+        return "微信服务端异常或临时不可用。"
+    if _looks_like_auth_error(raw_body):
+        return "返回内容疑似登录态失效，请重新复制该账号 Cookie。"
+    return None
+
+
+def _business_error_hint(err_code: Any, err_msg: Any) -> str | None:
+    text = f"{err_code} {err_msg or ''}"
+    if str(err_code) in {"300334", "300342"}:
+        return "Cookie 可能已失效，或当前 Cookie 不属于这个视频号，请重新复制该账号后台 Cookie。"
+    if _looks_like_auth_error(text):
+        return "登录态/Cookie 可能无效或过期，请重新复制该账号 Cookie。"
+    if "频繁" in text or "rate" in text.lower() or str(err_code) in {"429", "-200010"}:
+        return "请求可能过于频繁，建议降低采集频率或稍后重试。"
+    if "权限" in text or "permission" in text.lower() or "forbidden" in text.lower():
+        return "当前 Cookie 对该账号或接口可能没有权限。"
+    return None
+
+
+def _looks_like_auth_error(value: Any) -> bool:
+    text = str(value or "").lower()
+    keywords = (
+        "cookie",
+        "session",
+        "token",
+        "login",
+        "auth",
+        "unauthorized",
+        "invalid",
+        "expired",
+        "登录",
+        "登陆",
+        "过期",
+        "鉴权",
+        "认证",
+        "未登录",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _format_hint(hint: str | None) -> str:
+    return f"，{hint}" if hint else ""
+
+
+def _format_business_error_message(path: str, err_code: Any, err_msg: Any, hint: str | None) -> str:
+    detail = str(err_msg or "").strip()
+    suffix = f"：{detail}" if detail else ""
+    return f"{_interface_name(path)} 连接成功，但微信返回业务码 {err_code}{suffix}{_format_hint(hint)}"
+
+
+def _interface_name(path: str) -> str:
+    clean_path = str(path or "").split("?", 1)[0].rstrip("/")
+    return clean_path.rsplit("/", 1)[-1] or clean_path or "接口"
 
 
 @dataclass(slots=True)
